@@ -5,7 +5,7 @@ import json
 from typing import Dict, List, Optional, Tuple, Type, TypeVar
 
 import redis.asyncio as redis
-from redis.exceptions import ConnectionError, TimeoutError, ResponseError
+from redis.exceptions import ConnectionError, TimeoutError, ResponseError, WatchError
 from cryptography.fernet import Fernet
 
 from app.core.logging import get_logger
@@ -19,9 +19,8 @@ T = TypeVar("T", WorkspaceEntity, ServiceEntity)
 
 class RedisManager:
     """
-    Async Redis manager with connection pooling and encryption.
-    Safe to construct even if Redis is down; methods catch connection errors
-    so the app can run in a degraded in-memory mode.
+    Async Redis manager with connection pooling, encryption, and safe transactions.
+    Provides ACID-like guarantees for item save/delete operations.
     """
 
     def __init__(self) -> None:
@@ -31,7 +30,7 @@ class RedisManager:
             port=s.REDIS_PORT,
             db=s.REDIS_DB,
             password=s.REDIS_PASSWORD,
-            max_connections=512,          # high concurrency
+            max_connections=512,
             decode_responses=False,
             socket_keepalive=True,
             socket_timeout=2.0,
@@ -78,7 +77,6 @@ class RedisManager:
         try:
             await self.redis.set(self.system_key(item_type), version)
         except Exception as exc:
-            # degradable path: log warning, don’t raise
             log.warning("Redis unavailable during set_system_version(%s): %s", item_type, exc)
 
     # ------------------- search -------------------
@@ -110,35 +108,46 @@ class RedisManager:
             return model.model_validate(data)  # type: ignore[return-value]
         except Exception:
             log.exception("Failed to decrypt/parse item %s:%s", item_type, item_id)
-            raise
+            return None
 
     async def save_item(self, item: T, item_type: str, new_system_version: str) -> str:
+        """
+        Save an item transactionally:
+        - encrypts content
+        - updates version key
+        - updates global system version
+        """
         item.version = new_system_version
         ser = json.dumps(item.to_dict()).encode()
         enc = self.cipher.encrypt(ser)
 
-        pipe = self.redis.pipeline()
+        key_data = self.item_key(item.id, item_type)
+        key_ver = self.version_key(item.id, item_type)
+        key_sys = self.system_key(item_type)
+
         try:
-            pipe.set(self.item_key(item.id, item_type), enc)
-            pipe.set(self.version_key(item.id, item_type), item.version)
-            pipe.set(self.system_key(item_type), new_system_version)
-            await pipe.execute()
-        except (ConnectionError, TimeoutError, ResponseError) as exc:
-            # In write paths we keep ERROR (so you know persistence failed),
-            # but the caller can decide whether to fail the request.
-            log.error("Redis pipeline error during save_item: %s", exc)
+            async with self.redis.pipeline(transaction=True) as pipe:
+                pipe.set(key_data, enc)
+                pipe.set(key_ver, item.version)
+                pipe.set(key_sys, new_system_version)
+                await pipe.execute()
+        except (ConnectionError, TimeoutError, ResponseError, WatchError) as exc:
+            log.error("Redis transaction error during save_item: %s", exc)
             raise
         return item.version
 
     async def delete_item(self, item_id: str, item_type: str, new_system_version: str) -> None:
-        pipe = self.redis.pipeline()
+        key_data = self.item_key(item_id, item_type)
+        key_ver = self.version_key(item_id, item_type)
+        key_sys = self.system_key(item_type)
         try:
-            pipe.delete(self.item_key(item_id, item_type))
-            pipe.delete(self.version_key(item_id, item_type))
-            pipe.set(self.system_key(item_type), new_system_version)
-            await pipe.execute()
-        except (ConnectionError, TimeoutError, ResponseError) as exc:
-            log.error("Redis pipeline error during delete_item: %s", exc)
+            async with self.redis.pipeline(transaction=True) as pipe:
+                pipe.delete(key_data)
+                pipe.delete(key_ver)
+                pipe.set(key_sys, new_system_version)
+                await pipe.execute()
+        except (ConnectionError, TimeoutError, ResponseError, WatchError) as exc:
+            log.error("Redis transaction error during delete_item: %s", exc)
             raise
 
     # ------------------- RSA keys -------------------
@@ -160,17 +169,14 @@ class RedisManager:
             return None
 
     async def save_rsa(self, public_pem: str, private_pem: str) -> None:
-        """
-        Best-effort persistence of RSA. If Redis is down, log a WARNING and return
-        without raising so startup remains clean in degraded mode.
-        """
         enc_priv = self.cipher.encrypt(private_pem.encode())
         try:
-            await self.redis.set(self.rsa_key("public"), public_pem)
-            await self.redis.set(self.rsa_key("private"), enc_priv)
+            async with self.redis.pipeline(transaction=True) as pipe:
+                pipe.set(self.rsa_key("public"), public_pem)
+                pipe.set(self.rsa_key("private"), enc_priv)
+                await pipe.execute()
         except Exception as exc:
             log.warning("Redis unavailable during save_rsa(): %s", exc)
-            # Do not raise; degraded mode is acceptable.
             return
 
 
@@ -179,8 +185,8 @@ class InMemoryCaches:
     """
     Keeps latest workspaces/services in memory, refreshed only when the
     respective Redis system version changes. Guarded by asyncio locks.
-    Safe if Redis is temporarily unavailable (no refresh, stale cache).
     """
+
     def __init__(self) -> None:
         self.workspaces: Dict[str, WorkspaceEntity] = {}
         self.services: Dict[str, ServiceEntity] = {}
@@ -198,13 +204,14 @@ class InMemoryCaches:
             if new_ver and new_ver == self.workspace_sys_ver:
                 return
             ids = await rm.search_ids(EntityType.WORKSPACE.value)
+            tasks = [rm.get_item(i, EntityType.WORKSPACE.value) for i in ids]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
             items: Dict[str, WorkspaceEntity] = {}
-            for i in ids:
-                it = await rm.get_item(i, EntityType.WORKSPACE.value)
-                if it:
-                    items[i] = it
+            for i, res in zip(ids, results):
+                if isinstance(res, WorkspaceEntity):
+                    items[i] = res
                     if log_details:
-                        log.info("Loaded workspace: id=%s name=%s ver=%s", i, it.name, it.version)
+                        log.info("Loaded workspace: id=%s name=%s ver=%s", i, res.name, res.version)
             if ids:
                 self.workspaces = items
                 self.workspace_sys_ver = new_ver or ""
@@ -218,13 +225,14 @@ class InMemoryCaches:
             if new_ver and new_ver == self.service_sys_ver:
                 return
             ids = await rm.search_ids(EntityType.SERVICE.value)
+            tasks = [rm.get_item(i, EntityType.SERVICE.value) for i in ids]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
             items: Dict[str, ServiceEntity] = {}
-            for i in ids:
-                it = await rm.get_item(i, EntityType.SERVICE.value)
-                if it:
-                    items[i] = it
+            for i, res in zip(ids, results):
+                if isinstance(res, ServiceEntity):
+                    items[i] = res
                     if log_details:
-                        log.info("Loaded service: id=%s name=%s ver=%s", i, it.name, it.version)
+                        log.info("Loaded service: id=%s name=%s ver=%s", i, res.name, res.version)
             if ids:
                 self.services = items
                 self.service_sys_ver = new_ver or ""

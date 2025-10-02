@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import secrets
 from collections import defaultdict
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path
 
@@ -329,7 +329,11 @@ async def service_discovery_v1(
     }
 
 
-@router_v2.get("/services/{service_id}/discovery", operation_id="service_discovery_v2", response_model=DiscoveryResponse)
+@router_v2.get(
+    "/services/{service_id}/discovery",
+    operation_id="service_discovery_v2",
+    response_model=DiscoveryResponse,
+)
 async def service_discovery_v2(
     service_id: str = Path(...),
     api_key: str = Depends(get_header_api_key),
@@ -346,30 +350,42 @@ async def service_discovery_v2(
     ]
 
     links_map: Dict[str, List[str]] = {}
+    contexts_map: Dict[str, List[dict]] = {}
     for link in found_links:
         links_map.setdefault(link.service_id, []).append(link.workspace_id)
+        if link.context:
+            contexts_map.setdefault(link.service_id, []).append(link.context)
 
-    discovered_services: List[DiscoveredService] = []
+    discovered_services: List[Union[DiscoveredService, dict]] = []
     for s_id, workspace_list in links_map.items():
         discovered_service = await get_service(s_id)
         discovered_workspaces: List[WorkspaceLimited] = []
         for w_id in workspace_list:
             workspace = await get_workspace(w_id)
             discovered_workspaces.append(
-                WorkspaceLimited(name=workspace.name, id=workspace.id, version=workspace.version, info=workspace.info)
+                WorkspaceLimited(
+                    name=workspace.name,
+                    id=workspace.id,
+                    version=workspace.version,
+                    info=workspace.info,
+                )
             )
-        discovered_services.append(
-            DiscoveredService(
-                service=ServiceLimited(
-                    name=discovered_service.name,
-                    id=discovered_service.id,
-                    type=discovered_service.type,
-                    version=discovered_service.version,
-                    info=discovered_service.info,
-                ),
-                workspaces=discovered_workspaces,
-            )
+        ds = DiscoveredService(
+            service=ServiceLimited(
+                name=discovered_service.name,
+                id=discovered_service.id,
+                type=discovered_service.type,
+                version=discovered_service.version,
+                info=discovered_service.info,
+            ),
+            workspaces=discovered_workspaces,
         )
+        ds_dict = ds.model_dump()
+        if s_id in contexts_map:
+            ds_dict["contexts"] = contexts_map[s_id]
+            discovered_services.append(ds_dict)
+        else:
+            discovered_services.append(ds)
 
     return DiscoveryResponse(
         detail="Service link(s) discovered",

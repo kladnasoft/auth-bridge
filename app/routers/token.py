@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import datetime
-from typing import Dict, Optional
+from typing import Dict
 
 import jwt
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, model_validator
 
 from app.core.redis import RedisManager, caches
@@ -118,9 +119,15 @@ async def issue_token(request: Request):
             is_invalid_link = False
             break
     if is_invalid_link:
-        raise HTTPException(status_code=400, detail=f"iss: {iss_service_id} and aud:{aud_service_id} is not linked together")
+        raise HTTPException(
+            status_code=400,
+            detail=f"iss: {iss_service_id} and aud:{aud_service_id} is not linked together"
+        )
 
-    token = await issue_jwt_token(payload=validated_model.payload, expiration_minutes=get_settings().ACCESS_TOKEN_EXPIRATION_MIN)
+    token = await issue_jwt_token(
+        payload=validated_model.payload,
+        expiration_minutes=get_settings().ACCESS_TOKEN_EXPIRATION_MIN
+    )
     return ResponseToken(access_token=token)
 
 
@@ -162,12 +169,44 @@ async def issue_token_v2(
             break
 
     if is_invalid_link:
-        raise HTTPException(status_code=400, detail=f"iss: {iss_service_id} and aud:{aud_service_id} is not linked together")
+        raise HTTPException(
+            status_code=400,
+            detail=f"iss: {iss_service_id} and aud:{aud_service_id} is not linked together"
+        )
     elif context:
         validated_model.payload.update(context)
 
-    token = await issue_jwt_token(payload=validated_model.payload, expiration_minutes=get_settings().ACCESS_TOKEN_EXPIRATION_MIN)
+    token = await issue_jwt_token(
+        payload=validated_model.payload,
+        expiration_minutes=get_settings().ACCESS_TOKEN_EXPIRATION_MIN
+    )
     return ResponseToken(access_token=token)
+
+
+# New endpoints
+
+@router_v1.get("/token/public_key", operation_id="get_public_key")
+async def get_public_key():
+    """Return the RSA public key in PEM format."""
+    return JSONResponse({"public_key_pem": PUBLIC_KEY_PEM})
+
+
+@router_v1.post("/token/verify", operation_id="verify_token")
+async def verify_token(request: Request):
+    """Verify a JWT sent by a service."""
+    data = await request.json()
+    token = data.get("token")
+    if not token:
+        raise HTTPException(status_code=400, detail="Missing token")
+
+    try:
+        decoded = jwt.decode(token, PUBLIC_KEY_PEM, algorithms=["RS256"])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+
+    return {"detail": "Token is valid", "claims": decoded}
 
 
 # Initialized during app lifespan in app.main

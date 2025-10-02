@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.core.security import validate_authbridge_api_key
 from app.core.redis import caches
 from app.settings import get_settings
+from app.routers.token import PUBLIC_KEY_PEM
 
 router = APIRouter(prefix="/api/v1", tags=["system"])
 
@@ -26,10 +27,10 @@ async def rotate_authbridge_key(_: str = Depends(validate_authbridge_api_key)):
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid AUTHBRIDGE_API_KEYS JSON") from exc
 
-    if len(json_keys) >= 2:
+    if len(json_keys) >= 1:
         s = get_settings()
-        s.AUTHBRIDGE_API_KEYS = json_keys  # hot-reload
-        return {"detail": "Reloaded: AUTHBRIDGE_API_KEYS"}
+        s.AUTHBRIDGE_API_KEYS = json_keys
+        return {"detail": f"Reloaded AUTHBRIDGE_API_KEYS (count={len(json_keys)})"}
     return {"detail": "Error: AUTHBRIDGE_API_KEYS cannot be loaded"}
 
 
@@ -45,3 +46,22 @@ async def get_system_version():
 async def heartbeat_check():
     current_time = datetime.utcnow().isoformat() + "Z"
     return {"status": "alive", "timestamp": current_time}
+
+
+@router.get("/system/jwks", operation_id="get_jwks")
+async def get_jwks():
+    """
+    JWKS endpoint for public key distribution.
+    Returns the RSA public key in JWKS-compatible format.
+    """
+    return {
+        "keys": [
+            {
+                "kty": "RSA",
+                "use": "sig",
+                "alg": "RS256",
+                "kid": "authbridge-rsa",
+                "pem": PUBLIC_KEY_PEM,
+            }
+        ]
+    }
