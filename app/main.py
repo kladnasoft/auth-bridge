@@ -12,10 +12,17 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from app.core.logging import setup_logging, get_logger
 from app.core.redis import RedisManager
 from app.routers.system import router as system_router
-from app.routers.service import router_v1 as service_router_v1, router_v2 as service_router_v2, reload_services
+from app.routers.service import (
+    router_v1 as service_router_v1,
+    router_v2 as service_router_v2,
+    reload_services,
+)
 from app.routers.workspace import router as workspace_router_v1, reload_workspaces
-from app.routers.token import router_v1 as token_router_v1, router_v2 as token_router_v2
-from app.routers.token import load_rsa_keys
+from app.routers.token import (
+    router_v1 as token_router_v1,
+    router_v2 as token_router_v2,
+    load_rsa_keys,
+)
 from app.settings import get_settings
 
 setup_logging("INFO")
@@ -56,7 +63,9 @@ async def lifespan(app: FastAPI):
         await reload_services(False)
         await reload_workspaces(False)
     else:
-        log.warning("Redis is not reachable at startup; running in degraded in-memory mode until Redis is up.")
+        log.warning(
+            "Redis is not reachable at startup; running in degraded in-memory mode until Redis is up."
+        )
 
     pub, prv = await load_rsa_keys()
     from app.routers import token as token_module
@@ -82,9 +91,8 @@ def create_app() -> FastAPI:
     async def _healthz():
         return JSONResponse({"status": "ok"})
 
-    # Include each module's router exactly once
+    # Routers
     app.include_router(system_router)
-    app.include_router(auth_bridge_router)
     app.include_router(workspace_router_v1)
     app.include_router(service_router_v1)
     app.include_router(service_router_v2)
@@ -112,4 +120,5 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=False)
