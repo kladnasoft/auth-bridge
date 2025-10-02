@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple, Type, TypeVar
 
 import redis.asyncio as redis
 from redis.exceptions import ConnectionError, TimeoutError, ResponseError, WatchError
+
 from cryptography.fernet import Fernet
 
 from app.core.logging import get_logger
@@ -19,8 +20,8 @@ T = TypeVar("T", WorkspaceEntity, ServiceEntity)
 
 class RedisManager:
     """
-    Async Redis manager with connection pooling, encryption, and safe transactions.
-    Provides ACID-like guarantees for item save/delete operations.
+    Async Redis manager with connection pooling, encryption, transactional writes,
+    audit stream helpers and pub/sub event publishing.
     """
 
     def __init__(self) -> None:
@@ -38,6 +39,9 @@ class RedisManager:
         )
         self.redis = redis.Redis(connection_pool=self._pool)
         self.cipher: Fernet = s.CIPHER_SUITE  # type: ignore[assignment]
+        # streams / channels
+        self.audit_stream_name = s.AUDIT_STREAM_NAME
+        self.pubsub_channel = s.PUBSUB_CHANNEL
 
     # ------------------- key helpers -------------------
     @staticmethod
@@ -91,8 +95,8 @@ class RedisManager:
             log.warning("Redis unavailable during search_ids(%s): %s", item_type, exc)
         return ids
 
-    # ------------------- CRUD -------------------
-    async def get_item(self, item_id: str, item_type: str) -> Optional[T]:
+    # ------------------- CRUD (ACID-ish with transactions) -------------------
+    async def get_item(self, item_id: str, item_type: str):
         key = self.item_key(item_id, item_type)
         try:
             blob = await self.redis.get(key)
@@ -116,6 +120,7 @@ class RedisManager:
         - encrypts content
         - updates version key
         - updates global system version
+        - publishes change & writes audit entry
         """
         item.version = new_system_version
         ser = json.dumps(item.to_dict()).encode()
@@ -134,6 +139,15 @@ class RedisManager:
         except (ConnectionError, TimeoutError, ResponseError, WatchError) as exc:
             log.error("Redis transaction error during save_item: %s", exc)
             raise
+
+        # publish & audit (best effort)
+        await self.publish_event("updated", item_type, item.id, item.version)
+        await self.audit(
+            action="save_item",
+            subject_type=item_type,
+            subject_id=item.id,
+            payload={"version": item.version},
+        )
         return item.version
 
     async def delete_item(self, item_id: str, item_type: str, new_system_version: str) -> None:
@@ -149,6 +163,15 @@ class RedisManager:
         except (ConnectionError, TimeoutError, ResponseError, WatchError) as exc:
             log.error("Redis transaction error during delete_item: %s", exc)
             raise
+
+        # publish & audit (best effort)
+        await self.publish_event("deleted", item_type, item_id, new_system_version)
+        await self.audit(
+            action="delete_item",
+            subject_type=item_type,
+            subject_id=item_id,
+            payload={"version": new_system_version},
+        )
 
     # ------------------- RSA keys -------------------
     async def get_rsa(self) -> Optional[Tuple[str, str]]:
@@ -177,7 +200,29 @@ class RedisManager:
                 await pipe.execute()
         except Exception as exc:
             log.warning("Redis unavailable during save_rsa(): %s", exc)
-            return
+
+    # ------------------- Audit & Pub/Sub -------------------
+    async def audit(self, action: str, subject_type: str, subject_id: str, payload: dict) -> None:
+        """
+        Append an audit event to a Redis Stream (best effort).
+        """
+        try:
+            data = {
+                "action": action,
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+                "payload": json.dumps(payload),
+            }
+            await self.redis.xadd(self.audit_stream_name.encode(), {k: v.encode() for k, v in data.items()}, maxlen=10000)
+        except Exception as exc:
+            log.debug("Audit write failed: %s", exc)
+
+    async def publish_event(self, op: str, subject_type: str, subject_id: str, version: str) -> None:
+        try:
+            msg = json.dumps({"op": op, "type": subject_type, "id": subject_id, "version": version})
+            await self.redis.publish(self.pubsub_channel, msg.encode())
+        except Exception as exc:
+            log.debug("Publish failed: %s", exc)
 
 
 # -------- In-process caches with version guards (high-throughput) -------------
@@ -212,9 +257,9 @@ class InMemoryCaches:
                     items[i] = res
                     if log_details:
                         log.info("Loaded workspace: id=%s name=%s ver=%s", i, res.name, res.version)
-            if ids:
-                self.workspaces = items
-                self.workspace_sys_ver = new_ver or ""
+            # Accept empty set (e.g., after purge)
+            self.workspaces = items
+            self.workspace_sys_ver = new_ver or ""
 
     async def reload_services_if_needed(self, rm: RedisManager, log_details: bool = False) -> None:
         new_ver = await rm.get_system_version(EntityType.SERVICE.value)
@@ -233,9 +278,8 @@ class InMemoryCaches:
                     items[i] = res
                     if log_details:
                         log.info("Loaded service: id=%s name=%s ver=%s", i, res.name, res.version)
-            if ids:
-                self.services = items
-                self.service_sys_ver = new_ver or ""
+            self.services = items
+            self.service_sys_ver = new_ver or ""
 
 
 caches = InMemoryCaches()

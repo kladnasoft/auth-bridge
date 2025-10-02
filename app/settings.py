@@ -3,77 +3,78 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 from functools import lru_cache
 from typing import List, Optional
 
 from cryptography.fernet import Fernet
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from dotenv import load_dotenv
+from pydantic import PrivateAttr
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="allow")
+    AUTHBRIDGE_BUILD_VERSION: str = os.getenv("AUTHBRIDGE_BUILD_VERSION", "1.0.0")
+    AUTHBRIDGE_ENVIRONMENT: str = os.getenv("AUTHBRIDGE_ENVIRONMENT", "dev")
 
-    AUTHBRIDGE_BUILD_VERSION: str = Field(default="1.0.0")
-    AUTHBRIDGE_ENVIRONMENT: str = Field(default="dev")  # dev|stage|qa|prod
+    # Admin API keys as list
+    AUTHBRIDGE_API_KEYS: List[str] = []
+    AUTHBRIDGE_CRYPT_KEY: str = os.getenv(
+        "AUTHBRIDGE_CRYPT_KEY", "change-me-please-change-me-32bytes-min"
+    )
 
-    AUTHBRIDGE_API_KEYS: List[str] = Field(default_factory=list)
-    AUTHBRIDGE_SENTRY_DSN: str = Field(default="")
+    ACCESS_TOKEN_EXPIRATION_MIN: int = int(os.getenv("ACCESS_TOKEN_EXPIRATION_MIN", "60"))
 
-    ACCESS_TOKEN_EXPIRATION_MIN: int = Field(default=10, gt=0)
+    # Redis
+    REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
+    REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
+    REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
+    REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD")
 
-    REDIS_HOST: str = Field(default="localhost")
-    REDIS_PORT: int = Field(default=6379)
-    REDIS_DB: int = Field(default=0)
-    REDIS_PASSWORD: Optional[str] = Field(default=None)
+    # Sentry
+    AUTHBRIDGE_SENTRY_DSN: Optional[str] = os.getenv("AUTHBRIDGE_SENTRY_DSN")
 
-    AUTHBRIDGE_CRYPT_KEY: str = Field(min_length=32)
+    # App types loading (not modified here)
+    AUTHBRIDGE_APP_TYPES: Optional[str] = os.getenv("AUTHBRIDGE_APP_TYPES")
 
-    CIPHER_SUITE: Fernet | None = None
+    # Streams / pubsub
+    AUDIT_STREAM_NAME: str = os.getenv("AUDIT_STREAM_NAME", "authbridge:audit")
+    PUBSUB_CHANNEL: str = os.getenv("PUBSUB_CHANNEL", "authbridge:caches")
 
-    @field_validator("AUTHBRIDGE_ENVIRONMENT")
-    @classmethod
-    def _valid_env(cls, v: str) -> str:
-        allowed = {"dev", "stage", "qa", "prod"}
-        if v not in allowed:
-            raise ValueError(f"AUTHBRIDGE_ENVIRONMENT must be one of {allowed}")
-        return v
+    # Rate limit defaults
+    RL_TOKEN_ISSUE_LIMIT_PER_MIN: int = int(os.getenv("RL_TOKEN_ISSUE_LIMIT_PER_MIN", "120"))
+    RL_DISCOVERY_LIMIT_PER_MIN: int = int(os.getenv("RL_DISCOVERY_LIMIT_PER_MIN", "240"))
 
-    @field_validator("AUTHBRIDGE_API_KEYS", mode="before")
-    @classmethod
-    def _parse_api_keys(cls, v):
-        if isinstance(v, list):
-            return v
-        if isinstance(v, str):
-            v = v.strip()
-            if not v:
-                return []
+    # Private attribute: not part of pydantic validation
+    _cipher_suite: Fernet = PrivateAttr()
+
+    # --- Compute derived values & parse env after validation ---
+    def model_post_init(self, __context) -> None:  # pydantic v2 hook
+        # Parse admin keys JSON or CSV if provided in env
+        env_keys = os.getenv("AUTHBRIDGE_API_KEYS")
+        if env_keys:
+            parsed: List[str] = []
             try:
-                parsed = json.loads(v)
-                if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
-                    raise ValueError
-                if any(len(k) < 16 for k in parsed):
-                    raise ValueError("One or more AUTHBRIDGE_API_KEYS are too short.")
-                return parsed
-            except Exception as exc:
-                raise ValueError(
-                    'AUTHBRIDGE_API_KEYS must be JSON list of strings, e.g. ["hex1","hex2"]'
-                ) from exc
-        return v
+                maybe_json = json.loads(env_keys)
+                if isinstance(maybe_json, list):
+                    parsed = [str(x) for x in maybe_json]
+                elif isinstance(maybe_json, str) and maybe_json.strip():
+                    parsed = [maybe_json.strip()]
+            except Exception:
+                parsed = [k.strip() for k in env_keys.split(",") if k.strip()]
+            if parsed:
+                self.AUTHBRIDGE_API_KEYS = parsed
 
-    @field_validator("CIPHER_SUITE", mode="before")
-    @classmethod
-    def _build_cipher(cls, v, info):
-        secret = info.data.get("AUTHBRIDGE_CRYPT_KEY")
-        if not secret or len(secret) < 32:
-            raise ValueError("AUTHBRIDGE_CRYPT_KEY must be provided (>= 32 chars).")
-        hashed = hashlib.sha256(secret.encode()).digest()
-        key = base64.urlsafe_b64encode(hashed)
-        return Fernet(key)
+        # Derive Fernet key from AUTHBRIDGE_CRYPT_KEY (sha256 → base64)
+        key = hashlib.sha256(self.AUTHBRIDGE_CRYPT_KEY.encode()).digest()
+        fkey = base64.urlsafe_b64encode(key)
+        self._cipher_suite = Fernet(fkey)
+
+    @property
+    def CIPHER_SUITE(self) -> Fernet:
+        """Read-only accessor for the derived cipher suite."""
+        return self._cipher_suite
 
 
-@lru_cache(maxsize=1)
+@lru_cache()
 def get_settings() -> Settings:
-    load_dotenv(override=False)
-    return Settings()  # type: ignore[call-arg]
+    return Settings()

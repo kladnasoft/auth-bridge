@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import secrets
-from fastapi import APIRouter, Body, Depends, HTTPException, Path
+from typing import Optional
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Header
 
 from app.core.logging import get_logger
 from app.core.redis import RedisManager, caches
@@ -10,8 +12,10 @@ from app.core.security import (
     validate_authbridge_api_key,
     validate_item_api_key,
     new_system_token,
+    check_rate_limit,
 )
 from app.models import EntityType, WorkspaceEntity, ServiceLink
+from app.settings import get_settings
 
 log = get_logger("auth-bridge.workspace")
 
@@ -27,7 +31,7 @@ async def get_workspace(workspace_id: str) -> WorkspaceEntity:
     await reload_workspaces()
     workspace = caches.workspaces.get(workspace_id)
     if not workspace:
-        raise HTTPException(status_code=404, detail="Workspace not found after [get_workspace]")
+        raise HTTPException(status_code=404, detail={"error_code": "NOT_FOUND", "message": "Workspace not found after [get_workspace]"})
     return workspace
 
 
@@ -39,7 +43,7 @@ async def workspace_exists(workspace_id: str) -> bool:
 # ------------------- list & get -------------------
 
 @router.get("/workspaces/list", operation_id="get_workspace_list")
-async def get_workspace_list(_: str = Depends(validate_authbridge_api_key)):
+async def get_workspace_list(x_api_key: str = Depends(validate_authbridge_api_key)):
     await reload_workspaces()
     return {
         "detail": "List of workspaces",
@@ -85,10 +89,13 @@ async def get_workspace_version(
 @router.post("/workspaces", operation_id="create_workspace")
 async def create_workspace(
     workspace: WorkspaceEntity = Body(...),
-    _: str = Depends(validate_authbridge_api_key),
+    x_api_key: str = Depends(validate_authbridge_api_key),
 ):
+    s = get_settings()
+    await check_rate_limit("admin", x_api_key, 120, 60)
+
     if await workspace_exists(workspace.id):
-        raise HTTPException(status_code=400, detail="Error. Workspace already exists!")
+        raise HTTPException(status_code=400, detail={"error_code": "ALREADY_EXISTS", "message": "Workspace already exists"})
 
     rm = RedisManager()
     new_ver = new_system_token()
@@ -96,6 +103,8 @@ async def create_workspace(
 
     caches.workspaces[workspace.id] = workspace
     caches.workspace_sys_ver = new_ver
+
+    await rm.audit("workspace_created", "workspace", workspace.id, {"name": workspace.name})
 
     return {
         "detail": "Workspace created",
@@ -113,21 +122,26 @@ async def create_workspace(
 @router.delete("/workspaces/{workspace_id}", operation_id="delete_workspace")
 async def delete_workspace(
     workspace_id: str = Path(..., embed=True),
-    _: str = Depends(validate_authbridge_api_key),
+    x_api_key: str = Depends(validate_authbridge_api_key),
 ):
+    s = get_settings()
+    await check_rate_limit("admin", x_api_key, 60, 60)
+
     workspace = await get_workspace(workspace_id)
     rm = RedisManager()
 
     # optimistic concurrency check
     current = await rm.get_item(workspace_id, EntityType.WORKSPACE.value)
     if current and current.version != workspace.version:
-        raise HTTPException(status_code=409, detail="Conflict: workspace was modified concurrently")
+        raise HTTPException(status_code=409, detail={"error_code": "CONFLICT", "message": "Workspace modified concurrently"})
 
     new_ver = new_system_token()
     await rm.delete_item(workspace_id, EntityType.WORKSPACE.value, new_ver)
 
     caches.workspaces.pop(workspace_id, None)
     caches.workspace_sys_ver = new_ver
+
+    await rm.audit("workspace_deleted", "workspace", workspace_id, {})
 
     return {
         "detail": "Workspace removed",
@@ -142,15 +156,22 @@ async def delete_workspace(
 @router.put("/workspaces/{workspace_id}/rekey", operation_id="rekey_workspace")
 async def rekey_workspace(
     workspace_id: str = Path(..., embed=True),
-    _: str = Depends(validate_authbridge_api_key),
+    x_api_key: str = Depends(validate_authbridge_api_key),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
 ):
+    s = get_settings()
+    await check_rate_limit("admin", x_api_key, 120, 60)
+
     workspace = await get_workspace(workspace_id)
     rm = RedisManager()
+
+    if if_match and if_match != workspace.version:
+        raise HTTPException(status_code=412, detail={"error_code": "PRECONDITION_FAILED", "message": "If-Match does not match current version"})
 
     # concurrency check
     current = await rm.get_item(workspace_id, EntityType.WORKSPACE.value)
     if current and current.version != workspace.version:
-        raise HTTPException(status_code=409, detail="Conflict: workspace was modified concurrently")
+        raise HTTPException(status_code=409, detail={"error_code": "CONFLICT", "message": "Workspace modified concurrently"})
 
     workspace.api_key = secrets.token_hex(32)
     new_ver = new_system_token()
@@ -158,6 +179,8 @@ async def rekey_workspace(
 
     caches.workspaces[workspace.id] = workspace
     caches.workspace_sys_ver = new_ver
+
+    await rm.audit("workspace_rekey", "workspace", workspace.id, {})
 
     return {
         "detail": "Workspace API_KEY regenerated",
@@ -176,42 +199,50 @@ async def link_service(
     workspace_id: str = Path(...),
     action: str = Path(...),
     service_link: ServiceLink = Body(...),
-    _: str = Depends(validate_authbridge_api_key),
+    x_api_key: str = Depends(validate_authbridge_api_key),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
 ):
-    from app.routers.service import reload_services
+    s = get_settings()
+    await check_rate_limit("admin", x_api_key, 240, 60)
+
+    from app.routers.service import reload_services  # avoid cycle
     workspace = await get_workspace(workspace_id)
     await reload_services()
 
     if service_link.issuer_id == service_link.audience_id:
-        raise HTTPException(status_code=404, detail=f"Service [{service_link.issuer_id}] cannot be linked to itself")
+        raise HTTPException(status_code=404, detail={"error_code": "BAD_LINK", "message": "Service cannot be linked to itself"})
 
     if service_link.issuer_id not in caches.services:
-        raise HTTPException(status_code=404, detail=f"Service [{service_link.issuer_id}] not found")
+        raise HTTPException(status_code=404, detail={"error_code": "NOT_FOUND", "message": f"Service [{service_link.issuer_id}] not found"})
     if service_link.audience_id not in caches.services:
-        raise HTTPException(status_code=404, detail=f"Service [{service_link.audience_id}] not found")
+        raise HTTPException(status_code=404, detail={"error_code": "NOT_FOUND", "message": f"Service [{service_link.audience_id}] not found"})
 
     # concurrency check
     rm = RedisManager()
+    if if_match and if_match != workspace.version:
+        raise HTTPException(status_code=412, detail={"error_code": "PRECONDITION_FAILED", "message": "If-Match does not match current version"})
     current = await rm.get_item(workspace_id, EntityType.WORKSPACE.value)
     if current and current.version != workspace.version:
-        raise HTTPException(status_code=409, detail="Conflict: workspace was modified concurrently")
+        raise HTTPException(status_code=409, detail={"error_code": "CONFLICT", "message": "Workspace modified concurrently"})
 
     if action == "link-service":
         if service_link in workspace.services:
-            raise HTTPException(status_code=404, detail="Service already linked")
+            raise HTTPException(status_code=404, detail={"error_code": "ALREADY_LINKED", "message": "Service already linked"})
         workspace.services.append(service_link)
     elif action == "unlink-service":
         if service_link not in workspace.services:
-            raise HTTPException(status_code=404, detail="Service is not linked")
+            raise HTTPException(status_code=404, detail={"error_code": "NOT_LINKED", "message": "Service is not linked"})
         workspace.services.remove(service_link)
     else:
-        raise HTTPException(status_code=404, detail=f"Incorrect action:{action} provided")
+        raise HTTPException(status_code=404, detail={"error_code": "BAD_ACTION", "message": f"Incorrect action:{action} provided"})
 
     new_ver = new_system_token()
     workspace.version = await rm.save_item(workspace, EntityType.WORKSPACE.value, new_ver)
 
     caches.workspaces[workspace.id] = workspace
     caches.workspace_sys_ver = new_ver
+
+    await rm.audit("workspace_link_change", "workspace", workspace.id, {"action": action})
 
     return {
         "detail": f"Successful action: {action}",
@@ -228,14 +259,20 @@ async def link_service(
 async def update_workspace_content(
     workspace_id: str = Path(..., embed=True),
     content: dict = Body(..., description="The updated content for the workspace"),
-    _: str = Depends(validate_authbridge_api_key),
+    x_api_key: str = Depends(validate_authbridge_api_key),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
 ):
+    s = get_settings()
+    await check_rate_limit("admin", x_api_key, 240, 60)
+
     workspace = await get_workspace(workspace_id)
 
     rm = RedisManager()
+    if if_match and if_match != workspace.version:
+        raise HTTPException(status_code=412, detail={"error_code": "PRECONDITION_FAILED", "message": "If-Match does not match current version"})
     current = await rm.get_item(workspace_id, EntityType.WORKSPACE.value)
     if current and current.version != workspace.version:
-        raise HTTPException(status_code=409, detail="Conflict: workspace was modified concurrently")
+        raise HTTPException(status_code=409, detail={"error_code": "CONFLICT", "message": "Workspace modified concurrently"})
 
     workspace.content = content
     new_ver = new_system_token()
@@ -243,6 +280,8 @@ async def update_workspace_content(
 
     caches.workspaces[workspace.id] = workspace
     caches.workspace_sys_ver = new_ver
+
+    await rm.audit("workspace_content_updated", "workspace", workspace.id, {"keys": list(content.keys())})
 
     return {
         "detail": "Workspace content updated",
@@ -258,14 +297,20 @@ async def update_workspace_content(
 async def update_workspace_info(
     workspace_id: str = Path(..., embed=True),
     info: dict = Body(..., description="The updated info for the workspace"),
-    _: str = Depends(validate_authbridge_api_key),
+    x_api_key: str = Depends(validate_authbridge_api_key),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
 ):
+    s = get_settings()
+    await check_rate_limit("admin", x_api_key, 240, 60)
+
     workspace = await get_workspace(workspace_id)
 
     rm = RedisManager()
+    if if_match and if_match != workspace.version:
+        raise HTTPException(status_code=412, detail={"error_code": "PRECONDITION_FAILED", "message": "If-Match does not match current version"})
     current = await rm.get_item(workspace_id, EntityType.WORKSPACE.value)
     if current and current.version != workspace.version:
-        raise HTTPException(status_code=409, detail="Conflict: workspace was modified concurrently")
+        raise HTTPException(status_code=409, detail={"error_code": "CONFLICT", "message": "Workspace modified concurrently"})
 
     workspace.info = info
     new_ver = new_system_token()
@@ -273,6 +318,8 @@ async def update_workspace_info(
 
     caches.workspaces[workspace.id] = workspace
     caches.workspace_sys_ver = new_ver
+
+    await rm.audit("workspace_info_updated", "workspace", workspace.id, {"keys": list(info.keys())})
 
     return {
         "detail": "Workspace info updated",
