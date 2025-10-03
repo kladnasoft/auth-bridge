@@ -16,13 +16,11 @@ from app.core.redis import RedisManager, caches
 from app.routers.system import router as system_router
 from app.routers.service import (
     router_v1 as service_router_v1,
-    router_v2 as service_router_v2,
     reload_services,
 )
 from app.routers.workspace import router as workspace_router_v1, reload_workspaces
 from app.routers.token import (
     router_v1 as token_router_v1,
-    router_v2 as token_router_v2,
     load_rsa_keys,
 )
 from app.settings import get_settings
@@ -134,9 +132,7 @@ def create_app() -> FastAPI:
     app.include_router(system_router)
     app.include_router(workspace_router_v1)
     app.include_router(service_router_v1)
-    app.include_router(service_router_v2)
     app.include_router(token_router_v1)
-    app.include_router(token_router_v2)
 
     def custom_openapi():
         if app.openapi_schema:
