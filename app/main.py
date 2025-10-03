@@ -72,7 +72,7 @@ async def lifespan(app: FastAPI):
             dsn=s.AUTHBRIDGE_SENTRY_DSN,
             environment=s.AUTHBRIDGE_ENVIRONMENT,
             release=str(s.AUTHBRIDGE_BUILD_VERSION),
-            traces_sample_rate=0.2,
+            traces_sample_rate=1,
             integrations=[
                 FastApiIntegration(transaction_style="url"),
                 StarletteIntegration(transaction_style="url"),

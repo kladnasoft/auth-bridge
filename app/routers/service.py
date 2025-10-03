@@ -309,81 +309,12 @@ async def update_service_info(
     }
 
 
-# ------------------- discovery v1 -------------------
-
-@router_v1.get("/services/{service_id}/discovery", operation_id="service_discovery_v1")
-async def service_discovery_v1(
-    service_id: str = Path(...),
-    api_key: str = Depends(get_header_api_key),
-):
-    s = get_settings()
-    await check_rate_limit("discovery", api_key, s.RL_DISCOVERY_LIMIT_PER_MIN, 60)
-
-    service = await get_service(service_id)
-    await validate_item_api_key(api_key, service, EntityType.SERVICE)
-    await reload_workspaces()
-
-    found_links = [
-        DiscoveredServiceLink(workspace_id=t.id, service_id=link.audience_id, context=link.context)
-        for t in caches.workspaces.values()
-        for link in t.services
-        if link.issuer_id == service.id
-    ]
-
-    links = []
-    jwts = []
-    for link in found_links:
-        link_service = await get_service(link.service_id)
-        link_workspace = caches.workspaces.get(link.workspace_id)
-        links.append(
-            {
-                "service": {"name": link_service.name, "id": link_service.id, "info": link_service.info},
-                "workspace": {"name": link_workspace.name, "id": link_workspace.id, "info": link_workspace.info},
-                "context": link.context,
-            }
-        )
-
-        for server in link_workspace.services:
-            ctx = server.context or {}
-            jwts.append(
-                {
-                    "jwt": {
-                        "iss": server.issuer_id,
-                        "aud": server.audience_id,
-                        "sub": link_workspace.id,
-                        "database": ctx.get("database"),
-                        "schema": ctx.get("schema"),
-                    }
-                }
-            )
-
-    rm = RedisManager()
-    await rm.audit("discovery_v1", "service", service.id, {"links": len(links)})
-
-    return {
-        "detail": "Service link(s) discovered",
-        "system_version": caches.service_sys_ver,
-        "service": {
-            "name": service.name,
-            "id": service.id,
-            "api_key": service.api_key,
-            "version": service.version,
-            "content": service.content,
-            "info": service.info,
-        },
-        "links": links,
-        "token_payloads": jwts,
-    }
-
-
-# ------------------- discovery v2 -------------------
-
-@router_v2.get(
+@router_v1.get(
     "/services/{service_id}/discovery",
-    operation_id="service_discovery_v2",
+    operation_id="service_discovery",
     response_model=DiscoveryResponse,
 )
-async def service_discovery_v2(
+async def service_discovery_v1(
     service_id: str = Path(...),
     api_key: str = Depends(get_header_api_key),
 ) -> DiscoveryResponse:
@@ -440,7 +371,7 @@ async def service_discovery_v2(
             discovered_services.append(ds)
 
     rm = RedisManager()
-    await rm.audit("discovery_v2", "service", service.id, {"links": len(discovered_services)})
+    await rm.audit("discovery", "service", service.id, {"links": len(discovered_services)})
 
     return DiscoveryResponse(
         detail="Service link(s) discovered",

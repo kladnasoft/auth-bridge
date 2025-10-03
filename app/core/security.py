@@ -22,7 +22,7 @@ async def get_header_api_key(x_api_key: Optional[str] = Header(None)) -> str:
 async def validate_authbridge_api_key(x_api_key: str = Header(...)) -> str:
     s = get_settings()
     if x_api_key not in s.AUTHBRIDGE_API_KEYS:
-        raise HTTPException(status_code=401, detail={"error_code": "INVALID_ADMIN_KEY", "message": "Invalid admin API key"})
+        raise HTTPException(status_code=401, detail={"error_code": "AUTHBRIDGE_API_KEYS", "message": "Invalid admin API key"})
     return x_api_key
 
 

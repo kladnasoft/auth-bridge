@@ -10,7 +10,9 @@ from typing import List, Optional
 from cryptography.fernet import Fernet
 from pydantic import PrivateAttr
 from pydantic_settings import BaseSettings
+from dotenv import load_dotenv
 
+load_dotenv()
 
 class Settings(BaseSettings):
     AUTHBRIDGE_BUILD_VERSION: str = os.getenv("AUTHBRIDGE_BUILD_VERSION", "1.0.0")

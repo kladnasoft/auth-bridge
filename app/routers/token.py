@@ -159,39 +159,8 @@ async def issue_jwt_token(payload: Dict, algorithm: str = "RS256", expiration_mi
 
 # ------------------- Endpoints -------------------
 
-@router_v1.post("/token/issue", response_model=ResponseToken, operation_id="issue_token")
-async def issue_token(request: Request):
-    # rate limit (per API key)
-    api_key = await get_header_api_key(request)
-    s = get_settings()
-    await check_rate_limit("issue", api_key, s.RL_TOKEN_ISSUE_LIMIT_PER_MIN, 60)
-
-    payload: dict = await request.json()
-    from app.routers.service import reload_services
-    from app.routers.workspace import reload_workspaces
-    await reload_services()
-    await reload_workspaces()
-
-    validated_model = Payload(payload=payload)
-
-    iss_service_id = validated_model.payload["iss"]
-    aud_service_id = validated_model.payload["aud"]
-    sub_workspace_id = validated_model.payload["sub"]
-
-    service = await get_service(iss_service_id)
-    await validate_item_api_key(api_key, service, EntityType.SERVICE)
-
-    workspace = await get_workspace(sub_workspace_id)
-    if not any(l.issuer_id == iss_service_id and l.audience_id == aud_service_id for l in workspace.services):
-        raise HTTPException(status_code=400, detail={"error_code": "UNLINKED", "message": "Services not linked"})
-
-    ttl = _get_service_specific_ttl_minutes(iss_service_id)
-    token = await issue_jwt_token(validated_model.payload, expiration_minutes=ttl)
-    return ResponseToken(access_token=token)
-
-
-@router_v2.post("/token/{service_id}/issue", response_model=ResponseToken, operation_id="issue_token_v2")
-async def issue_token_v2(
+@router_v1.post("/token/{service_id}/issue", response_model=ResponseToken, operation_id="issue_token")
+async def issue_token(
     request: Request,
     payload: TokenPayload,
     service_id: str = Path(..., embed=True),
