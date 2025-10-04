@@ -25,6 +25,8 @@ from app.routers.token import (
     load_rsa_keys,
 )
 from app.routers.dashboard import router as dashboard_router
+from app.routers.admin import router as admin_router
+from app.routers.service_console import router as service_router
 from app.settings import get_settings
 
 setup_logging("INFO")
@@ -48,11 +50,9 @@ async def _pubsub_listener():
             if msg is None or msg.get("type") != "message":
                 continue
             try:
-                payload = msg["data"].decode()
                 # On any event, we simply trigger reloads (on-demand caches will dedupe)
                 await caches.reload_services_if_needed(rm, log_details=False)
                 await caches.reload_workspaces_if_needed(rm, log_details=False)
-                log.debug("Processed cache event: %s", payload)
             except Exception:
                 log.exception("Error processing pubsub message")
     except asyncio.CancelledError:
@@ -135,7 +135,9 @@ def create_app() -> FastAPI:
     app.include_router(workspace_router_v1)
     app.include_router(service_router_v1)
     app.include_router(token_router_v1)
-    app.include_router(dashboard_router)
+    app.include_router(dashboard_router)  # Trust visualization UI (/dashboard)
+    app.include_router(admin_router)      # Admin CRUD UI (/admin)
+    app.include_router(service_router)      # Console CRUD UI (/admin)
 
     def custom_openapi():
         if app.openapi_schema:

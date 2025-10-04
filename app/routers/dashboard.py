@@ -27,95 +27,458 @@ DASHBOARD_HTML = """
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>AuthBridge • Trust Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: {
+              50: '#f0f9ff',
+              100: '#e0f2fe',
+              200: '#bae6fd',
+              300: '#7dd3fc',
+              400: '#38bdf8',
+              500: '#0ea5e9',
+              600: '#0284c7',
+              700: '#0369a1',
+              800: '#075985',
+              900: '#0c4a6e',
+            },
+            gradient: {
+              start: '#667eea',
+              end: '#764ba2'
+            }
+          },
+          animation: {
+            'fade-in': 'fadeIn 0.5s ease-in-out',
+            'slide-up': 'slideUp 0.3s ease-out',
+            'pulse-soft': 'pulseSoft 2s infinite',
+          },
+          keyframes: {
+            fadeIn: {
+              '0%': { opacity: '0' },
+              '100%': { opacity: '1' }
+            },
+            slideUp: {
+              '0%': { transform: 'translateY(10px)', opacity: '0' },
+              '100%': { transform: 'translateY(0)', opacity: '1' }
+            },
+            pulseSoft: {
+              '0%, 100%': { opacity: '1' },
+              '50%': { opacity: '0.8' }
+            }
+          }
+        }
+      }
+    }
+  </script>
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    
+    * {
+      font-family: 'Inter', sans-serif;
+    }
+    
+    :root {
+      --glass-bg: rgba(255, 255, 255, 0.7);
+      --glass-border: rgba(255, 255, 255, 0.2);
+      --shadow-soft: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+      --shadow-card: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+    }
+    
+    body {
+      background: linear-gradient(135deg, #f5f7fa 0%, #e4edf5 100%);
+      min-height: 100vh;
+    }
+    
+    .glass {
+      background: var(--glass-bg);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--glass-border);
+    }
+    
+    .card {
+      background: white;
+      border-radius: 16px;
+      box-shadow: var(--shadow-card);
+      border: 1px solid rgba(226, 232, 240, 0.8);
+      transition: all 0.3s ease;
+    }
+    
+    .card:hover {
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 10px 10px -5px rgba(0, 0, 0, 0.02);
+      transform: translateY(-2px);
+    }
+    
+    .btn {
+      padding: 0.6rem 1.2rem;
+      border-radius: 10px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    
+    .btn:active {
+      transform: scale(0.98);
+    }
+    
+    .input, .select, .textarea {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      border: 1px solid rgb(226, 232, 240);
+      border-radius: 10px;
+      background: white;
+      transition: all 0.2s ease;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+    }
+    
+    .input:focus, .select:focus, .textarea:focus {
+      border-color: rgb(14, 165, 233);
+      box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
+      outline: none;
+    }
+    
+    .label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: rgb(71, 85, 105);
+      margin-bottom: 0.5rem;
+      display: block;
+    }
+    
+    .kbd {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      background: rgb(241, 245, 249);
+      border: 1px solid rgb(226, 232, 240);
+      border-radius: 6px;
+      padding: 0.2rem 0.4rem;
+      font-size: 0.75rem;
+      color: #374151 !important;
+    }
+    
+    .kbd-short {
+      max-width: 80px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      display: inline-block;
+      vertical-align: middle;
+    }
+    
+    .pill {
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      background: rgb(241, 245, 249);
+      border: 1px solid rgb(226, 232, 240);
+      color: #374151 !important;
+    }
+    
+    .tab-btn {
+      padding: 0.75rem 1.5rem;
+      border-radius: 10px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      position: relative;
+      overflow: hidden;
+      color: #64748b;
+    }
+    
+    .tab-btn.active {
+      background: rgba(14, 165, 233, 0.1);
+      color: rgb(14, 165, 233);
+    }
+    
+    .tab-btn:not(.active):hover {
+      background: rgba(100, 116, 139, 0.05);
+    }
+    
+    .muted {
+      color: rgb(100, 116, 139);
+    }
+    
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1rem;
+    }
+    
+    .grid-aside {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 1.5rem;
+    }
+    
+    @media (max-width: 1024px) {
+      .grid-aside {
+        grid-template-columns: 1fr;
+      }
+    }
+    
+    .list {
+      max-height: 420px;
+      overflow: auto;
+    }
+    
+    .json-invalid {
+      border-color: rgb(239, 68, 68) !important;
+      background: #fef2f2;
+    }
+    
+    .hint {
+      font-size: 0.75rem;
+      color: rgb(100, 116, 139);
+    }
+    
+    .header-gradient {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .header-gradient::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+    }
+    
+    .kpi-card {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(10px);
+      border-radius: 12px;
+      padding: 1.25rem;
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      transition: all 0.3s ease;
+    }
+    
+    .kpi-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+    }
+    
+    .kpi-card,
+    .kpi-card *:not(i):not(input) {
+      color: #1e293b !important;
+    }
+    
+    .kpi-card .text-slate-600 {
+      color: #475569 !important;
+    }
+    
+    .status-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+    }
+    
+    .status-active {
+      background: #10b981;
+      box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+    }
+    
+    .fade-in {
+      animation: fadeIn 0.5s ease-in-out;
+    }
+    
+    .slide-up {
+      animation: slideUp 0.3s ease-out;
+    }
+    
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+    
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+      border-radius: 10px;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 10px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+    
+    .loading-pulse {
+      animation: pulseSoft 2s infinite;
+    }
+    
+    .header-content h1,
+    .header-content p,
+    .header-content label {
+      color: white !important;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
+    
+    .glass .input {
+      color: #1e293b !important;
+    }
+    
+    .glass .btn {
+      color: #1e293b !important;
+    }
+    
+    .header-gradient,
+    .header-gradient .header-text,
+    .header-gradient label {
+      color: white !important;
+    }
+    
+    .header-gradient .text-slate-400 {
+      color: rgba(255, 255, 255, 0.7) !important;
+    }
+    
+    .header-gradient .placeholder-slate-500::placeholder {
+      color: rgba(255, 255, 255, 0.6) !important;
+    }
+    
+    /* Dashboard specific styles */
     .link { stroke: #9ca3af; stroke-opacity: 0.6; }
     .badge { padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
     .chip { width: 10px; height: 10px; border-radius: 9999px; display: inline-block; border: 1px solid rgba(0,0,0,.08); }
-    .btn { padding: 0.5rem 0.75rem; border-radius: 0.5rem; }
-    .card { background: white; border: 1px solid rgb(226 232 240); border-radius: 1rem; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
     .kv { display: grid; grid-template-columns: 1fr auto; gap: .25rem .75rem; font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
   <div class="max-w-7xl mx-auto p-4 md:p-8">
-    <header class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-      <div>
-        <h1 class="text-2xl md:text-3xl font-bold">AuthBridge Trust Dashboard</h1>
-        <p class="text-sm text-slate-600">Visualize real-time trust relationships between services across workspaces.</p>
-      </div>
-      <div class="flex flex-wrap items-center gap-2">
-        <input id="apiKeyInput" type="password" placeholder="Paste AUTHBRIDGE admin key"
-               class="w-72 px-3 py-2 rounded border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-               autocomplete="off">
-        <button id="saveKeyBtn" class="btn bg-indigo-600 hover:bg-indigo-700 text-white">Sign in</button>
-        <span class="mx-2 w-px h-6 bg-slate-200"></span>
+    <!-- Header with gradient -->
+    <header class="header-gradient rounded-2xl p-6 md:p-8 mb-6 relative overflow-hidden fade-in">
+      <div class="relative z-10">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div class="header-content">
+            <div class="flex items-center gap-3 mb-2">
+              <div class="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+                <i class="fas fa-chart-network text-white text-lg"></i>
+              </div>
+              <h1 class="text-3xl font-bold text-white">AuthBridge Trust Dashboard</h1>
+            </div>
+            <p class="opacity-95 text-sm text-white">Visualize real-time trust relationships between services across workspaces.</p>
+          </div>
+          <div class="glass rounded-xl p-4 flex flex-col md:flex-row items-center gap-3">
+            <div class="relative flex-1">
+              <i class="fas fa-key absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400"></i>
+              <input id="apiKeyInput" type="password" placeholder="Paste AUTHBRIDGE admin key"
+                     class="input !pl-10 !w-full md:!w-72 placeholder-slate-500 text-slate-900"
+                     autocomplete="off">
+            </div>
+            <button id="saveKeyBtn" class="btn bg-white hover:bg-slate-100 text-slate-800 border border-slate-200 w-full md:w-auto">
+              <i class="fas fa-sign-in-alt"></i> Sign in
+            </button>
+            <label class="flex items-center gap-2 text-sm text-white">
+              <input id="autoRefreshChk" type="checkbox" class="w-4 h-4 accent-white" checked>
+              Auto refresh (60s)
+            </label>
+            <button id="refreshBtn" class="btn bg-white/80 hover:bg-white text-slate-800 border border-white/30">
+              <i class="fas fa-sync-alt"></i> Refresh
+            </button>
+          </div>
+        </div>
 
-        <label class="flex items-center gap-2 text-sm text-slate-700">
-          <input id="autoRefreshChk" type="checkbox" class="w-4 h-4 accent-indigo-600" checked>
-          Auto refresh (60s)
-        </label>
-        <button id="refreshBtn" class="btn bg-slate-200 hover:bg-slate-300 text-slate-800" title="Refresh data now">Refresh</button>
+        <!-- KPIs row -->
+        <div class="mt-6 grid grid-cols-2 md:grid-cols-6 gap-4">
+          <div class="kpi-card">
+            <div class="flex items-center justify-between">
+              <div class="text-sm font-medium text-slate-600">Services</div>
+              <i class="fas fa-cube text-primary-400"></i>
+            </div>
+            <div id="svcCount" class="text-2xl font-bold mt-2 text-slate-800">–</div>
+          </div>
+          <div class="kpi-card">
+            <div class="flex items-center justify-between">
+              <div class="text-sm font-medium text-slate-600">Workspaces</div>
+              <i class="fas fa-layer-group text-primary-400"></i>
+            </div>
+            <div id="wsCount" class="text-2xl font-bold mt-2 text-slate-800">–</div>
+          </div>
+          <div class="kpi-card">
+            <div class="flex items-center justify-between">
+              <div class="text-sm font-medium text-slate-600">Links</div>
+              <i class="fas fa-link text-primary-400"></i>
+            </div>
+            <div id="linkCount" class="text-2xl font-bold mt-2 text-slate-800">–</div>
+          </div>
+          <div class="kpi-card">
+            <div class="flex items-center justify-between">
+              <div class="text-sm font-medium text-slate-600">Redis</div>
+              <i class="fas fa-database text-primary-400"></i>
+            </div>
+            <div id="redisState" class="text-2xl font-bold mt-2 text-slate-800">–</div>
+            <div class="mt-2 text-xs text-slate-600 kv">
+              <span>Clients</span><span id="redisClients">–</span>
+              <span>Memory</span><span id="redisMem">–</span>
+              <span>Uptime</span><span id="redisUptime">–</span>
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="flex items-center justify-between">
+              <div class="text-sm font-medium text-slate-600">JWKS Keys</div>
+              <i class="fas fa-key text-primary-400"></i>
+            </div>
+            <div id="jwksCount" class="text-2xl font-bold mt-2 text-slate-800">–</div>
+            <div class="mt-2 text-xs text-slate-600">Current KID: <span id="kid">–</span></div>
+          </div>
+          <div class="kpi-card">
+            <div class="flex items-center justify-between">
+              <div class="text-sm font-medium text-slate-600">Last update</div>
+              <i class="fas fa-clock text-primary-400"></i>
+            </div>
+            <div id="lastUpdate" class="text-xl font-bold mt-2 text-slate-800">–</div>
+          </div>
+        </div>
       </div>
     </header>
 
-    <section class="mt-6 grid grid-cols-1 md:grid-cols-6 gap-4">
-      <div class="p-4 card">
-        <div class="text-slate-500 text-sm">Services</div>
-        <div id="svcCount" class="text-3xl font-semibold mt-1">–</div>
-      </div>
-      <div class="p-4 card">
-        <div class="text-slate-500 text-sm">Workspaces</div>
-        <div id="wsCount" class="text-3xl font-semibold mt-1">–</div>
-      </div>
-      <div class="p-4 card">
-        <div class="text-slate-500 text-sm">Links</div>
-        <div id="linkCount" class="text-3xl font-semibold mt-1">–</div>
-      </div>
-      <div class="p-4 card">
-        <div class="text-slate-500 text-sm">Redis</div>
-        <div id="redisState" class="text-3xl font-semibold mt-1">–</div>
-        <div class="mt-2 text-xs text-slate-600 kv">
-          <span>Clients</span><span id="redisClients">–</span>
-          <span>Memory</span><span id="redisMem">–</span>
-          <span>Uptime</span><span id="redisUptime">–</span>
-        </div>
-      </div>
-      <div class="p-4 card">
-        <div class="text-slate-500 text-sm">JWKS Keys</div>
-        <div id="jwksCount" class="text-3xl font-semibold mt-1">–</div>
-        <div class="mt-2 text-xs text-slate-600">Current KID: <span id="kid">–</span></div>
-      </div>
-      <div class="p-4 card">
-        <div class="text-slate-500 text-sm">Last update</div>
-        <div id="lastUpdate" class="text-3xl font-semibold mt-1">–</div>
-      </div>
-    </section>
-
-    <section class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-      <div class="md:col-span-2 p-4 card">
-        <div class="flex items-center justify-between mb-2">
-          <h2 class="font-semibold">Trust Graph</h2>
+    <section class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4 slide-up">
+      <div class="md:col-span-2 p-5 card">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-bold text-lg flex items-center gap-2">
+            <i class="fas fa-project-diagram text-primary-500"></i> Trust Graph
+          </h2>
           <div class="text-xs text-slate-500">Drag nodes, hover for details. Click a link to inspect.</div>
         </div>
         <svg id="graph" class="w-full bg-slate-50 rounded-xl border border-slate-200" style="height: 560px"></svg>
       </div>
-      <div class="p-4 card">
-        <h2 class="font-semibold mb-3">Legend & Filters</h2>
-        <div id="legend" class="flex flex-wrap gap-2"></div>
+      <div class="p-5 card">
+        <h2 class="font-bold text-lg mb-4 flex items-center gap-2">
+          <i class="fas fa-filter text-primary-500"></i> Legend & Filters
+        </h2>
+        <div id="legend" class="flex flex-wrap gap-2 mb-4"></div>
 
-        <div class="mt-4">
-          <label class="text-sm text-slate-600">Workspace filter</label>
-          <select id="wsFilter" class="mt-1 w-full px-3 py-2 rounded border border-slate-300">
+        <div class="mb-4">
+          <label class="label">Workspace filter</label>
+          <select id="wsFilter" class="select">
             <option value="">All workspaces</option>
           </select>
         </div>
-        <div class="mt-4">
-          <label class="text-sm text-slate-600">Search service</label>
-          <input id="searchInput" placeholder="Type to highlight…" class="mt-1 w-full px-3 py-2 rounded border border-slate-300"/>
+        <div class="mb-4">
+          <label class="label">Search service</label>
+          <input id="searchInput" placeholder="Type to highlight…" class="input"/>
         </div>
 
         <div class="mt-6 border-t pt-4">
-          <h3 class="font-semibold text-sm mb-2">Service types</h3>
+          <h3 class="font-semibold text-sm mb-2 flex items-center gap-2">
+            <i class="fas fa-chart-pie text-primary-500"></i> Service types
+          </h3>
           <div id="typeDist" class="text-xs text-slate-700 grid grid-cols-2 gap-1"></div>
         </div>
 
@@ -127,14 +490,16 @@ DASHBOARD_HTML = """
           <div id="promBox" class="hidden mt-3 text-xs bg-slate-50 rounded border border-slate-200 p-3">
             <div class="flex items-center justify-between">
               <strong>Metrics</strong>
-              <button id="promRefresh" class="btn bg-slate-200 hover:bg-slate-300 text-slate-800">Reload</button>
+              <button id="promRefresh" class="btn bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs">Reload</button>
             </div>
             <div id="prometrics" class="mt-2 font-mono whitespace-pre-wrap leading-5">—</div>
           </div>
         </div>
 
         <div class="mt-6 border-t pt-4">
-          <h3 class="font-semibold text-sm mb-2">Link inspector</h3>
+          <h3 class="font-semibold text-sm mb-2 flex items-center gap-2">
+            <i class="fas fa-search text-primary-500"></i> Link inspector
+          </h3>
           <div id="linkInspector" class="text-xs text-slate-700 bg-slate-50 rounded border border-slate-200 p-3">
             Click an edge to see details…
           </div>
@@ -142,16 +507,21 @@ DASHBOARD_HTML = """
       </div>
     </section>
 
-    <section class="mt-6 p-4 card">
-      <div class="flex items-center justify-between">
-        <h2 class="font-semibold">Activity</h2>
+    <section class="mt-6 p-5 card slide-up">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="font-bold text-lg flex items-center gap-2">
+          <i class="fas fa-list-alt text-primary-500"></i> Activity
+        </h2>
         <span id="activityInfo" class="text-xs text-slate-500"></span>
       </div>
-      <pre id="activityLog" class="text-xs bg-slate-50 p-3 rounded border border-slate-200 max-h-56 overflow-auto">Waiting for data…</pre>
+      <pre id="activityLog" class="text-xs bg-slate-50 p-3 rounded-lg border border-slate-200 max-h-56 overflow-auto">Waiting for data…</pre>
     </section>
 
     <footer class="mt-8 text-center text-xs text-slate-500">
-      Built for non-technical stakeholders • Uses your admin API key in-browser
+      <div class="flex items-center justify-center gap-2 mb-2">
+        <i class="fas fa-eye text-primary-500"></i>
+        <span>Built for non-technical stakeholders • Uses your admin API key in-browser</span>
+      </div>
     </footer>
   </div>
 
@@ -464,55 +834,33 @@ DASHBOARD_HTML = """
       "<span><strong>Workspace</strong></span><span>"+(L.workspace_id||"")+"</span>",
       "</div>",
       "<div class='mt-2'><strong>Context</strong></div>",
-      "<pre class='mt-1 p-2 bg-white border rounded overflow-auto max-h-40'>"+JSON.stringify(L.context, null, 2)+"</pre>"
+      "<pre class='mt-1 text-xs bg-slate-100 p-2 rounded'>" + JSON.stringify(L.context, null, 2) + "</pre>"
     ].join("");
     linkInspector.innerHTML = html;
   }
 
   // =========================
-  // PROMETHEUS SNAPSHOT (optional)
+  // PROMETHEUS
   // =========================
   promToggle.addEventListener("change", ()=>{
-    if (promToggle.checked) {
-      promBox.classList.remove("hidden");
-      loadPromMetrics();
-    } else {
-      promBox.classList.add("hidden");
-    }
+    promBox.classList.toggle("hidden", !promToggle.checked);
+    if (promToggle.checked) loadProm();
   });
-  promRefresh.addEventListener("click", loadPromMetrics);
-
-  function loadPromMetrics(){
-    prometrics.textContent = "Loading metrics from /metrics…";
-    fetch("/metrics")
-      .then(r => {
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return r.text();
-      })
-      .then(text => {
-        // Grep a few useful lines (customize as needed)
-        const wanted = [
-          "process_cpu_seconds_total",
-          "process_resident_memory_bytes",
-          "uvicorn_requests_total",
-          "http_requests_total",
-          "authbridge_tokens_issued_total",
-          "authbridge_cache_refresh_total",
-          "redis_connected_clients"
-        ];
-        const lines = text.split("\\n").filter(line => {
-          if (!line || line.startsWith("#")) return false;
-          return wanted.some(w => line.startsWith(w));
-        });
-        prometrics.textContent = lines.length ? lines.join("\\n") : "(No matching metrics or Prometheus not enabled)";
-      })
-      .catch(err => {
-        prometrics.textContent = "Failed to load /metrics → " + err.message + ". Ensure Prometheus client is enabled on the server.";
-      });
+  promRefresh.addEventListener("click", loadProm);
+  function loadProm(){
+    const key = localStorage.getItem(KEY_STORAGE);
+    if (!key) return;
+    fetch("/dashboard/prometheus", { headers: {"x-api-key": key} })
+      .then(r => r.ok ? r.text() : Promise.reject("HTTP " + r.status))
+      .then(t => prometrics.textContent = t)
+      .catch(e => prometrics.textContent = "Error: " + e);
   }
 
-  // Auto-run if key present
-  if (saved) fetchAndRender(true);
+  // =========================
+  // INIT
+  // =========================
+  log("Dashboard initialized. Please sign in with your admin key.");
+  if (localStorage.getItem(KEY_STORAGE)) fetchAndRender(true);
 })();
 </script>
 </body>
