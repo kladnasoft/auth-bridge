@@ -99,37 +99,51 @@ Pass `x-api-key` header with either a global admin key or an entity's `api_key`.
 - `POST /api/v1/system/rotate` reloads API keys (admin)
 - `GET /api/v1/system/diagnostics`
 
-## Python SDK (CLI) Usage
 
-Environment variables:
+## Python SDK Usage
+
+We now provide two separate clients:
+
+- **AdminClient** — for provisioning (requires `AUTHBRIDGE_API_KEYS`)
+- **ServiceClient** — for runtime service actions (requires `SERVICE_KEY` of the service)
+
+### Environment Variables
+
 - `AUTHBRIDGE_BASE_URL` (default: `http://localhost:8000`)
-- `AUTHBRIDGE_ADMIN_KEY` (admin `x-api-key`)
-- `AUTHBRIDGE_API_KEY` (entity `x-api-key`)
+- `AUTHBRIDGE_API_KEYS` (JSON list or comma-separated string of admin keys)
+- `SERVICE_KEY` (service-specific API key for runtime)
 
-Examples:
+### Examples
 
-**Issue a token (v1 structured path):**
+#### Admin Example
+
 ```bash
-python -m app.client token issue --service-id svc_a --aud svc_b --sub ws1 --claims '{"role": "writer"}'
+python app/client/examples/admin_example.py
 ```
 
-**Verify a token:**
+This will:
+- Create (or recreate) a workspace and services
+- Link Reflection ➜ SuperTable
+- Rotate RSA keys
+
+#### Service Example
+
 ```bash
-python -m app.client token verify --token "$JWT"
+python app/client/examples/service_example.py
 ```
 
-**Discovery (v1 path, v2-style response):**
+This will:
+- Discover service links
+- Issue a token (requires SERVICE_KEY of the issuer service)
+- Verify the token (requires SERVICE_KEY of the audience service)
+- Fetch JWKS
+
+#### Full Roundtrip (Issue + Verify)
+
 ```bash
-python -m app.client discovery --service-id svc_a
+python app/client/service_issue_and_verify.py
 ```
 
-**Create a service (admin):**
-```bash
-python -m app.client services create --id svc_a --name "Service A" --type app
-```
-
-**Create a workspace (admin) and link services:**
-```bash
-python -m app.client workspaces create --id ws1 --name "Workspace 1"
-python -m app.client workspaces link --workspace-id ws1 --issuer svc_a --audience svc_b --context '{"database":"db","schema":"dbo"}'
-```
+This demonstrates:
+- Issuing with issuer's key (`SERVICE_KEY_ISSUER`)
+- Verifying with audience's key (`SERVICE_KEY_AUDIENCE`)

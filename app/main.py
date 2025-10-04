@@ -1,3 +1,4 @@
+# app/main.py
 from __future__ import annotations
 
 import asyncio
@@ -23,6 +24,7 @@ from app.routers.token import (
     router_v1 as token_router_v1,
     load_rsa_keys,
 )
+from app.routers.dashboard import router as dashboard_router
 from app.settings import get_settings
 
 setup_logging("INFO")
@@ -133,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(workspace_router_v1)
     app.include_router(service_router_v1)
     app.include_router(token_router_v1)
+    app.include_router(dashboard_router)
 
     def custom_openapi():
         if app.openapi_schema:
