@@ -1,23 +1,38 @@
-# app/routers/service_console.py
+# app/routers/bridge.py
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from app.core.logging import get_logger
 from app.core.redis import caches
-from app.core.security import validate_authbridge_api_key
 from app.models import ServiceLink
 from app.routers.service import reload_services
 from app.routers.workspace import reload_workspaces
 from app.core.types_loader import load_service_types
 
-log = get_logger("auth-bridge.service-console")
+log = get_logger("auth-bridge.bridge-ui")
 
-router = APIRouter(tags=["service-console"])
+router = APIRouter(tags=["service-bridge-ui"])
+
+
+async def validate_service_api_key(x_api_key: str = Header(..., alias="x-api-key")) -> str:
+    """
+    Validate a *service* API key (not an admin key).
+    Returns the matching service_id to the caller for convenience.
+    """
+    await reload_services()
+    for svc in caches.services.values():
+        if getattr(svc, "api_key", None) == x_api_key:
+            return svc.id
+    raise HTTPException(
+        status_code=401,
+        detail={"error_code": "INVALID_SERVICE_KEY", "message": "Invalid service x-api-key"},
+    )
+
 
 SERVICE_CONSOLE_HTML = """
 <!doctype html>
@@ -75,29 +90,29 @@ SERVICE_CONSOLE_HTML = """
   </script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    
+
     * {
       font-family: 'Inter', sans-serif;
     }
-    
+
     :root {
       --glass-bg: rgba(255, 255, 255, 0.7);
       --glass-border: rgba(255, 255, 255, 0.2);
       --shadow-soft: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
       --shadow-card: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
     }
-    
+
     body {
       background: linear-gradient(135deg, #f5f7fa 0%, #e4edf5 100%);
       min-height: 100vh;
     }
-    
+
     .glass {
       background: var(--glass-bg);
       backdrop-filter: blur(10px);
       border: 1px solid var(--glass-border);
     }
-    
+
     .card {
       background: white;
       border-radius: 16px;
@@ -105,12 +120,12 @@ SERVICE_CONSOLE_HTML = """
       border: 1px solid rgba(226, 232, 240, 0.8);
       transition: all 0.3s ease;
     }
-    
+
     .card:hover {
       box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 10px 10px -5px rgba(0, 0, 0, 0.02);
       transform: translateY(-2px);
     }
-    
+
     .btn {
       padding: 0.6rem 1.2rem;
       border-radius: 10px;
@@ -120,11 +135,11 @@ SERVICE_CONSOLE_HTML = """
       align-items: center;
       gap: 0.5rem;
     }
-    
+
     .btn:active {
       transform: scale(0.98);
     }
-    
+
     .input, .select, .textarea {
       width: 100%;
       padding: 0.75rem 1rem;
@@ -134,13 +149,13 @@ SERVICE_CONSOLE_HTML = """
       transition: all 0.2s ease;
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
     }
-    
+
     .input:focus, .select:focus, .textarea:focus {
       border-color: rgb(14, 165, 233);
       box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
       outline: none;
     }
-    
+
     .label {
       font-size: 0.8rem;
       font-weight: 600;
@@ -148,7 +163,7 @@ SERVICE_CONSOLE_HTML = """
       margin-bottom: 0.5rem;
       display: block;
     }
-    
+
     .kbd {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       background: rgb(241, 245, 249);
@@ -158,7 +173,7 @@ SERVICE_CONSOLE_HTML = """
       font-size: 0.75rem;
       color: #374151 !important;
     }
-    
+
     .kbd-short {
       max-width: 80px;
       overflow: hidden;
@@ -167,7 +182,7 @@ SERVICE_CONSOLE_HTML = """
       display: inline-block;
       vertical-align: middle;
     }
-    
+
     .pill {
       padding: 0.25rem 0.75rem;
       border-radius: 9999px;
@@ -177,7 +192,7 @@ SERVICE_CONSOLE_HTML = """
       border: 1px solid rgb(226, 232, 240);
       color: #374151 !important;
     }
-    
+
     .tab-btn {
       padding: 0.75rem 1.5rem;
       border-radius: 10px;
@@ -187,76 +202,76 @@ SERVICE_CONSOLE_HTML = """
       overflow: hidden;
       color: #64748b;
     }
-    
+
     .tab-btn.active {
       background: rgba(14, 165, 233, 0.1);
       color: rgb(14, 165, 233);
     }
-    
+
     .tab-btn:not(.active):hover {
       background: rgba(100, 116, 139, 0.05);
     }
-    
+
     .muted {
       color: rgb(100, 116, 139);
     }
-    
+
     .grid-2 {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 1rem;
     }
-    
+
     .grid-3 {
       display: grid;
       grid-template-columns: 1fr 1fr 1fr;
       gap: 1rem;
     }
-    
+
     .grid-aside {
       display: grid;
       grid-template-columns: 380px 1fr;
       gap: 1.5rem;
     }
-    
+
     @media (max-width: 1024px) {
       .grid-aside {
         grid-template-columns: 1fr;
       }
     }
-    
+
     .list {
       max-height: 420px;
       overflow: auto;
     }
-    
+
     .json-invalid {
       border-color: rgb(239, 68, 68) !important;
       background: #fef2f2;
     }
-    
+
     .hint {
       font-size: 0.75rem;
       color: rgb(100, 116, 139);
     }
-    
+
     .header-gradient {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       color: white;
       position: relative;
       overflow: hidden;
     }
-    
+
     .header-gradient::before {
       content: '';
       position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
       background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
     }
-    
+
     .kpi-card {
       background: rgba(255, 255, 255, 0.95);
       backdrop-filter: blur(10px);
@@ -265,21 +280,21 @@ SERVICE_CONSOLE_HTML = """
       border: 1px solid rgba(255, 255, 255, 0.5);
       transition: all 0.3s ease;
     }
-    
+
     .kpi-card:hover {
       transform: translateY(-3px);
       box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
     }
-    
+
     .kpi-card,
     .kpi-card *:not(i):not(input) {
       color: #1e293b !important;
     }
-    
+
     .kpi-card .text-slate-600 {
       color: #475569 !important;
     }
-    
+
     .status-indicator {
       width: 8px;
       height: 8px;
@@ -287,71 +302,71 @@ SERVICE_CONSOLE_HTML = """
       display: inline-block;
       margin-right: 6px;
     }
-    
+
     .status-active {
       background: #10b981;
       box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
     }
-    
+
     .fade-in {
       animation: fadeIn 0.5s ease-in-out;
     }
-    
+
     .slide-up {
       animation: slideUp 0.3s ease-out;
     }
-    
+
     ::-webkit-scrollbar {
       width: 6px;
     }
-    
+
     ::-webkit-scrollbar-track {
       background: #f1f5f9;
       border-radius: 10px;
     }
-    
+
     ::-webkit-scrollbar-thumb {
       background: #cbd5e1;
       border-radius: 10px;
     }
-    
+
     ::-webkit-scrollbar-thumb:hover {
       background: #94a3b8;
     }
-    
+
     .loading-pulse {
       animation: pulseSoft 2s infinite;
     }
-    
+
     .header-content h1,
     .header-content p,
     .header-content label {
       color: white !important;
       text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
     }
-    
+
     .glass .input {
       color: #1e293b !important;
     }
-    
+
     .glass .btn {
       color: #1e293b !important;
     }
-    
+
     .header-gradient,
     .header-gradient .header-text,
     .header-gradient label {
       color: white !important;
     }
-    
+
     .header-gradient .text-slate-400 {
       color: rgba(255, 255, 255, 0.7) !important;
     }
-    
+
     .header-gradient .placeholder-slate-500::placeholder {
       color: rgba(255, 255, 255, 0.6) !important;
     }
-    
+
     /* Service Console specific styles */
     .json-box { 
       font-size: .8rem; 
@@ -360,6 +375,13 @@ SERVICE_CONSOLE_HTML = """
       border-radius: 10px; 
       padding: .75rem; 
       overflow: auto; 
+    }
+
+    .readonly {
+      background: #f8fafc !important;
+      color: #64748b !important;
+      pointer-events: none;
+      user-select: none;
     }
   </style>
 </head>
@@ -382,14 +404,16 @@ SERVICE_CONSOLE_HTML = """
             <div class="relative">
               <i class="fas fa-key absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400"></i>
               <input id="svcApiKey" type="password" placeholder="Service API key"
-                     class="input !pl-10 !w-full md:!w-64 placeholder-slate-500 text-slate-900"
-                     autocomplete="off">
+               class="input !pl-10 !w-full md:!w-64 placeholder-slate-500 text-slate-900"
+                class="input !pl-10 !w-full md:!w-64 placeholder-slate-500 text-slate-900"
+                autocomplete="off"
+                style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22400%22 height=%2244%22><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 fill=%22%23000000%22 fill-opacity=%220.12%22 font-size=%2220%22 font-family=%22Inter, sans-serif%22 font-weight=%22700%22 letter-spacing=%222%22>SERVICE API KEY</text></svg>');background-repeat:no-repeat;background-position:center;background-size:contain;">
             </div>
             <div class="relative">
               <i class="fas fa-id-badge absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400"></i>
               <input id="svcIdInput" type="text" placeholder="Service ID"
-                     class="input !pl-10 !w-full md:!w-64 placeholder-slate-500 text-slate-900">
-            </div>
+                class="input !pl-10 !w-full md:!w-64 placeholder-slate-500 text-slate-900"
+                style="background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22400%22 height=%2244%22><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 fill=%22%23000000%22 fill-opacity=%220.12%22 font-size=%2220%22 font-family=%22Inter, sans-serif%22 font-weight=%22700%22 letter-spacing=%222%22>SERVICE ID</text></svg>');background-repeat:no-repeat;background-position:center;background-size:contain;">          </div>
             <button id="saveKeyBtn" class="btn bg-white hover:bg-slate-100 text-slate-800 border border-slate-200 w-full md:w-auto">
               <i class="fas fa-sign-in-alt"></i> Use credentials
             </button>
@@ -501,15 +525,15 @@ SERVICE_CONSOLE_HTML = """
           <div class="grid-3">
             <div>
               <label class="label">Issuer (service)</label>
-              <input id="tokIssuer" class="input" placeholder="issuer service id"/>
+              <input id="tokIssuer" class="input readonly" placeholder="issuer service id" readonly aria-readonly="true" title="Issuer is fixed by the selected Service ID above"/>
             </div>
             <div>
               <label class="label">Audience (service)</label>
               <select id="tokAudience" class="select"></select>
             </div>
             <div>
-              <label class="label">TTL (minutes)</label>
-              <input id="tokTtl" class="input" type="number" min="1" value="60"/>
+              <label class="label">Workspace (sub)</label>
+              <select id="tokWorkspace" class="select"></select>
             </div>
           </div>
           <div class="grid-2 mt-4">
@@ -625,6 +649,7 @@ SERVICE_CONSOLE_HTML = """
   // Tokens tab
   const tokIssuer = document.getElementById("tokIssuer");
   const tokAudience = document.getElementById("tokAudience");
+  const tokWorkspace = document.getElementById("tokWorkspace");
   const tokTtl = document.getElementById("tokTtl");
   const tokContext = document.getElementById("tokContext");
   const tokContextHint = document.getElementById("tokContextHint");
@@ -674,7 +699,7 @@ SERVICE_CONSOLE_HTML = """
   }
   attachJsonLiveValidation(tokContext, tokContextHint);
 
-  // Populate audience select from snapshot.services
+  // Populate select helper
   function setSelectOptions(sel, arr, get){
     sel.replaceChildren();
     arr.forEach(o=>{
@@ -725,7 +750,6 @@ SERVICE_CONSOLE_HTML = """
       el.innerHTML = `<div class="font-medium">${i?.name || l.issuer_id} ➜ ${a?.name || l.audience_id}</div>
       <div class="text-[11px] text-slate-500">ws: ${l.workspace_id}</div>`;
       el.addEventListener("click", ()=>{
-        // Show context as alert
         alert(JSON.stringify(l.context || {}, null, 2));
       });
       return el;
@@ -748,13 +772,29 @@ SERVICE_CONSOLE_HTML = """
       });
     }
 
-    // Tokens tab defaults
+    // Tokens tab defaults (issuer fixed & read-only)
     tokIssuer.value = serviceId || "";
-    setSelectOptions(tokAudience, snapshot.services, s=>({value:s.id,label:`${s.name} (${s.type})`}));
+    tokIssuer.readOnly = true;
+    tokIssuer.classList.add("readonly");
+
+    // Audience: only linked audiences from this service's outbound links; exclude itself
+    const linkedAudienceIds = Array.from(new Set(outbound.map(l => l.audience_id))).filter(id => id && id !== serviceId);
+    const linkedAudienceObjs = linkedAudienceIds
+      .map(id => snapshot.services.find(s => s.id === id))
+      .filter(Boolean);
+    setSelectOptions(tokAudience, linkedAudienceObjs, s=>({value:s.id,label:`${s.name} (${s.type})`}));
+
+    // Workspace: only workspaces where this service has outbound links (has access)
+    const outWsIds = Array.from(new Set(outbound.map(l => l.workspace_id)));
+    const outWsObjs = outWsIds.map(id => {
+      const w = snapshot.workspaces.find(x => x.id === id);
+      return { id, name: (w && w.name) ? w.name : id };
+    });
+    setSelectOptions(tokWorkspace, outWsObjs, w=>({value:w.id, label:w.name}));
   }
 
   function fetchSnapshot(onDone){
-    fetch("/service-console/data", { headers: headers() })
+    fetch("/bridge/data", { headers: headers() })
       .then(r=>{ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
       .then(d => { snapshot = d; onDone && onDone(); })
       .catch(e => {
@@ -793,30 +833,50 @@ SERVICE_CONSOLE_HTML = """
     });
   }
 
-  issueBtn.addEventListener("click", ()=>{
-    // Validate JSON
+  issueBtn.addEventListener("click", () => {
     try {
       const ctx = parseJSONOrEmpty(tokContext.value);
+
+      // Issuer is locked to the selected service id (never trust the readonly input value)
+      const issuerId = (svcIdInput.value || "").trim();
+      if (!issuerId) {
+        tokLog.textContent = "Issuer (Service ID) is required. Enter it at the top and press Use credentials.";
+        return;
+      }
+
+      // Build payload: workspace comes from dropdown; keep context as claims.
       const payload = {
-        issuer_id: (tokIssuer.value||"").trim(),
-        audience_id: (tokAudience.value||"").trim(),
-        ttl_minutes: Math.max(1, parseInt(tokTtl.value||"60", 10)),
-        context: ctx
+        aud: (tokAudience.value || "").trim(),
+        sub: (tokWorkspace.value || "").trim(),
+        claims: ctx && typeof ctx === "object" ? ctx : {}
       };
-      // Try common token endpoints; stop at first success
+
+      // Ensure required fields
+      if (!payload.aud) {
+        tokLog.textContent = "Audience (service) is required.";
+        return;
+      }
+      if (!payload.sub) {
+        tokLog.textContent = "Workspace (sub) is required. Select it from the dropdown.";
+        return;
+      }
+
       (async () => {
-        let res = null;
-        const endpoints = ["/api/v1/token/issue", "/api/v1/tokens/issue", "/api/v1/token/mint"];
-        let lastErr = null;
-        for (const ep of endpoints){
-          try { res = await post(ep, payload); break; } catch(e){ lastErr = e; }
-        }
-        if (!res) throw lastErr || new Error("No token endpoint available");
+        const ep = `/api/v1/token/${encodeURIComponent(issuerId)}/issue`;
+        const res = await post(ep, payload);
+
         tokLog.textContent = JSON.stringify(res, null, 2);
-        const token = res.access_token || res.token || (res.data && res.data.token) || "";
+        const token =
+          res.access_token ||
+          res.token ||
+          (res.data && res.data.token) ||
+          "";
         tokResult.value = token || "";
-      })().catch(e => { tokLog.textContent = "Error: " + e.message; tokResult.value = ""; });
-    } catch(e) {
+      })().catch((e) => {
+        tokLog.textContent = "Error: " + e.message;
+        tokResult.value = "";
+      });
+    } catch (e) {
       tokLog.textContent = "Invalid context JSON: " + e.message;
     }
   });
@@ -830,14 +890,12 @@ SERVICE_CONSOLE_HTML = """
 
   // ======= JWT tools =======
   function b64urlDecodeToString(b64url){
-    // Convert base64url to base64
     const b64 = b64url.replace(/-/g,'+').replace(/_/g,'/');
     const pad = b64.length % 4 ? 4 - (b64.length % 4) : 0;
     const b64p = b64 + "=".repeat(pad);
     try {
       return decodeURIComponent(escape(atob(b64p)));
     } catch {
-      // atob returns a binary string; fallback
       return atob(b64p);
     }
   }
@@ -868,14 +926,13 @@ SERVICE_CONSOLE_HTML = """
     if (!token) { jwtValidation.textContent = "Paste a token first."; return; }
     (async () => {
       const payload = { token };
-      const endpoints = ["/api/v1/token/validate", "/api/v1/token/verify", "/api/v1/token/introspect"];
+      const endpoints = ["/api/v1/token/verify", "/api/v1/token/introspect"];
       let res = null, lastErr = null;
       for (const ep of endpoints){
         try { res = await post(ep, payload); break; } catch(e){ lastErr = e; }
       }
       if (!res) throw lastErr || new Error("No validation endpoint available");
       jwtValidation.textContent = JSON.stringify(res, null, 2);
-      // Also try to decode locally for convenience
       try {
         const {header, payload:pl} = decodeJwtLocally(token);
         jwtHeader.textContent = JSON.stringify(header, null, 2);
@@ -901,81 +958,82 @@ SERVICE_CONSOLE_HTML = """
 </html>
 """
 
-@router.get("/service-console", response_class=HTMLResponse, include_in_schema=False)
+
+@router.get("/bridge", response_class=HTMLResponse, include_in_schema=False)
 async def service_console_page() -> HTMLResponse:
-  """
-  Service-facing console with 3 tabs:
-    - Discovery (shows info, content, links for a specific service ID)
-    - Tokens (issue tokens with JSON context validation)
-    - JWT Tools (server validation + client-side decode)
-  Uses the provided API key via x-api-key.
-  """
-  return HTMLResponse(SERVICE_CONSOLE_HTML)
+    """
+    Service-facing console with 3 tabs:
+      - Discovery (shows info, content, links for a specific service ID)
+      - Tokens (issue tokens with JSON context validation)
+      - JWT Tools (server validation + client-side decode)
+    Uses the provided API key via x-api-key.
+    """
+    return HTMLResponse(SERVICE_CONSOLE_HTML)
 
 
-@router.get("/service-console/data", response_class=JSONResponse, include_in_schema=False)
-async def service_console_data(_: str = Depends(validate_authbridge_api_key)) -> JSONResponse:
-  """
-  Aggregated snapshot (services, workspaces, links, types) for the service console.
-  Requires a valid API key in `x-api-key`. The console filters by the provided service ID on the client.
-  """
-  await reload_services()
-  await reload_workspaces()
+@router.get("/bridge/data", response_class=JSONResponse, include_in_schema=False)
+async def service_console_data(_: str = Depends(validate_service_api_key)) -> JSONResponse:
+    """
+    Aggregated snapshot (services, workspaces, links, types) for the service bridge.
+    Requires a valid *service* API key in `x-api-key`. The console filters by the provided service ID on the client.
+    """
+    await reload_services()
+    await reload_workspaces()
 
-  # Services
-  services: List[Dict[str, Any]] = []
-  for s in caches.services.values():
-      services.append(
-          {
-              "id": s.id,
-              "name": s.name,
-              "type": s.type or "unknown",
-              "version": s.version,
-              "info": s.info or {},
-              "content": s.content or {},
-          }
-      )
+    # Services
+    services: List[Dict[str, Any]] = []
+    for s in caches.services.values():
+        services.append(
+            {
+                "id": s.id,
+                "name": s.name,
+                "type": s.type or "unknown",
+                "version": s.version,
+                "info": s.info or {},
+                "content": s.content or {},
+            }
+        )
 
-  # Workspaces & links
-  workspaces: List[Dict[str, Any]] = []
-  links: List[Dict[str, Any]] = []
-  for w in caches.workspaces.values():
-      workspaces.append(
-          {
-              "id": w.id,
-              "name": w.name,
-              "version": w.version,
-              "info": w.info or {},
-          }
-      )
-      for link in (w.services or []):
-          if isinstance(link, ServiceLink):
-              links.append(
-                  {
-                      "workspace_id": w.id,
-                      "issuer_id": link.issuer_id,
-                      "audience_id": link.audience_id,
-                      "context": link.context or {},
-                  }
-              )
+    # Workspaces & links
+    workspaces: List[Dict[str, Any]] = []
+    links: List[Dict[str, Any]] = []
+    for w in caches.workspaces.values():
+        workspaces.append(
+            {
+                "id": w.id,
+                "name": w.name,
+                "version": w.version,
+                "info": w.info or {},
+            }
+        )
+        for link in (w.services or []):
+            if isinstance(link, ServiceLink):
+                links.append(
+                    {
+                        "workspace_id": w.id,
+                        "issuer_id": link.issuer_id,
+                        "audience_id": link.audience_id,
+                        "context": link.context or {},
+                    }
+                )
 
-  types = sorted(set(load_service_types()) | set([s["type"] for s in services]))
+    types = sorted(set(load_service_types()) | set([s["type"] for s in services]))
 
-  payload = {
-      "now": datetime.now(timezone.utc).isoformat(),
-      "system": {
-          "services_version": caches.service_sys_ver,
-          "workspaces_version": caches.workspace_sys_ver,
-      },
-      "services": sorted(services, key=lambda x: (str(x["type"]).lower(), str(x["name"]).lower())),
-      "workspaces": sorted(workspaces, key=lambda x: str(x["name"]).lower()),
-      "links": links,
-      "types": types,
-  }
-  return JSONResponse(payload)
+    payload = {
+        "now": datetime.now(timezone.utc).isoformat(),
+        "system": {
+            "services_version": caches.service_sys_ver,
+            "workspaces_version": caches.workspace_sys_ver,
+        },
+        "services": sorted(services, key=lambda x: (str(x["type"]).lower(), str(x["name"]).lower())),
+        "workspaces": sorted(workspaces, key=lambda x: str(x["name"]).lower()),
+        "links": links,
+        "types": types,
+    }
+    return JSONResponse(payload)
 
 
-@router.get("/service-console/ready", response_class=PlainTextResponse, include_in_schema=False)
+@router.get("/bridge/ready", response_class=PlainTextResponse, include_in_schema=False)
 async def service_console_ready() -> PlainTextResponse:
-  """Simple readiness ping for this UI."""
-  return PlainTextResponse("ok")
+    """Simple readiness ping for this UI."""
+    return PlainTextResponse("ok")

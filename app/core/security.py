@@ -4,7 +4,6 @@ from __future__ import annotations
 import secrets
 from typing import Optional, Union
 
-from fastapi import Header, HTTPException
 from starlette.requests import Request
 
 from app.core.redis import RedisManager
@@ -13,6 +12,34 @@ from app.settings import get_settings
 
 
 # ------------------- API Key helpers -------------------
+from fastapi import Header, HTTPException, status
+from app.core.redis import caches
+
+async def validate_service_api_key(
+    x_api_key: str = Header(..., description="Service API key"),
+    x_service_id: str | None = Header(None, description="Optional service ID for extra validation")
+) -> str:
+    """
+    Validates a service API key.
+    Optionally crosschecks it against the provided service_id for added security.
+    """
+    if not x_api_key:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing x-api-key header")
+
+    # Ensure services are loaded
+    if not caches.services:
+        raise HTTPException(status_code=503, detail="Service cache not ready")
+
+    # Find matching service by API key
+    matched_service = next((s for s in caches.services.values() if s.api_key == x_api_key), None)
+    if not matched_service:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+
+    # Optional cross-check by service ID
+    if x_service_id and matched_service.id != x_service_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="API key does not match service ID")
+
+    return matched_service.id
 
 
 async def get_header_api_key(x_api_key: Optional[str] = Header(None)) -> str:

@@ -26,7 +26,7 @@ from app.routers.token import (
 )
 from app.routers.dashboard import router as dashboard_router
 from app.routers.admin import router as admin_router
-from app.routers.service_console import router as service_router
+from app.routers.bridge import router as service_router
 from app.settings import get_settings
 
 setup_logging("INFO")
