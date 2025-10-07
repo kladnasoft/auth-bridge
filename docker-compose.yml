@@ -1,35 +1,38 @@
-version: '3.9'
 services:
-  app:
-    image: auth-bridge:latest
+  auth-bridge:
     build:
       context: .
       dockerfile: Dockerfile
-    volumes:
-      - .:/app
+    image: kladnasoft/auth-bridge:latest
     environment:
-      - AUTHBRIDGE_ENVIRONMENT=development
-      - AUTHBRIDGE_SENTRY_DSN=https://d063195e81d7abc798f1912b436a926e@o4510112958054400.ingest.de.sentry.io/4510112959430736
+      - AUTHBRIDGE_ENVIRONMENT=dev
       - AUTHBRIDGE_API_KEYS=["be6db1c88fe4ef81d63c7eea22f8c12fec94f2c32cabd5b47284a676aa8a22c8","293a22bf6ab906f5d57d1245abbce97ecf96664285ef3d8fc2b79ea00c83a303"]
       - AUTHBRIDGE_CRYPT_KEY=0c88423805e975bce92edddcf2fa9dbd9ba5e770ca731da1d237f0b45e253aeb
       - REDIS_HOST=redis
-      - ACCESS_TOKEN_EXPIRATION_MIN=10000
-    networks:
-      reflection:
-        aliases:
-          - auth-bridge
+      - ACCESS_TOKEN_EXPIRATION_MIN=60
     ports:
       - "8000:8000"
     depends_on:
       - redis
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/v1/system/heartbeat"]
+      interval: 30s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   redis:
-    image: "redis:latest"
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - 6379:6379
-    networks:
-      reflection:
-        aliases:
-          - redis
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "sh", "-lc", "redis-cli ping | grep PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
 networks:
-  reflection:
-    external: true
+  default:
+    name: reflection

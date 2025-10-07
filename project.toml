@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "auth-bridge"
 version = "1.0.0"
-description = "AuthBridge: secure organization & application registry, service discovery, and token issuer"
+description = "AuthBridge: secure workspace & service registry, service discovery, and token issuer, config store"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
-authors = [{ name = "Kladna Soft", email = "info@kladnasoft.com" }]
+authors = [{ name = "Kladna Soft", email = "lkupas@kladnasoft.com" }]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
