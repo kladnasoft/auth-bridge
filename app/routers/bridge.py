@@ -803,15 +803,75 @@ SERVICE_CONSOLE_HTML = """
       });
   }
 
-  // Credential actions
-  saveKeyBtn.addEventListener("click", ()=>{
+  // Credential actions (login/logout UX)
+  function setSignedIn(on){
+    if (on){
+      svcApiKey.disabled = true;
+      svcIdInput.disabled = true;
+      svcApiKey.classList.add("opacity-80", "cursor-not-allowed");
+      svcIdInput.classList.add("opacity-80", "cursor-not-allowed");
+
+      saveKeyBtn.innerHTML = '<i class="fas fa-sign-out-alt"></i> Logout';
+      saveKeyBtn.onclick = () => {
+        localStorage.removeItem(KEY_STORAGE);
+        localStorage.removeItem(SVCID_STORAGE);
+
+        svcApiKey.value = "";
+        svcIdInput.value = "";
+        svcApiKey.disabled = false;
+        svcIdInput.disabled = false;
+        svcApiKey.classList.remove("opacity-80", "cursor-not-allowed");
+        svcIdInput.classList.remove("opacity-80", "cursor-not-allowed");
+
+        saveKeyBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Use credentials';
+        saveKeyBtn.onclick = doSignIn;
+
+        // Clear UI
+        kSvcName.textContent = "–";
+        kSvcType.textContent = "Type: —";
+        kWsCount.textContent = "–";
+        kInbound.textContent = "–";
+        kOutbound.textContent = "–";
+        svcSummary.innerHTML = '<div class="text-slate-500">Signed out.</div>';
+        svcInfoBox.textContent = "—";
+        svcContentBox.textContent = "—";
+        inboundList.replaceChildren();
+        outboundList.replaceChildren();
+        wsListBox.replaceChildren();
+        tokIssuer.value = "";
+        tokAudience.replaceChildren();
+        tokWorkspace.replaceChildren();
+        tokContext.value = "";
+        tokResult.value = "";
+        tokLog.textContent = "—";
+        jwtInput.value = "";
+        jwtHeader.textContent = "—";
+        jwtPayload.textContent = "—";
+        jwtValidation.textContent = "—";
+      };
+      return;
+    }
+
+    svcApiKey.disabled = false;
+    svcIdInput.disabled = false;
+    svcApiKey.classList.remove("opacity-80", "cursor-not-allowed");
+    svcIdInput.classList.remove("opacity-80", "cursor-not-allowed");
+    saveKeyBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Use credentials';
+    saveKeyBtn.onclick = doSignIn;
+  }
+
+  function doSignIn(){
     const key = (svcApiKey.value||"").trim();
     const id = (svcIdInput.value||"").trim();
     if (!key || !id) { alert("Enter both Service API key and Service ID."); return; }
     localStorage.setItem(KEY_STORAGE, key);
     localStorage.setItem(SVCID_STORAGE, id);
+    setSignedIn(true);
     fetchSnapshot(()=> renderDiscovery(id));
-  });
+  }
+
+  saveKeyBtn.onclick = doSignIn;
+
 
   refreshBtn.addEventListener("click", ()=>{
     const id = (svcIdInput.value||"").trim();
@@ -950,7 +1010,10 @@ SERVICE_CONSOLE_HTML = """
 
   // Auto-init if saved
   if (savedKey && savedSvcId) {
+    setSignedIn(true);
     fetchSnapshot(()=> renderDiscovery(savedSvcId));
+  } else {
+    setSignedIn(false);
   }
 })();
 </script>

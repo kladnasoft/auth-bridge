@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Dict, List, Optional, Tuple, Type, TypeVar
+from typing import Dict, List, Optional, Tuple, Type, TypeVar, Union
 
 import redis.asyncio as redis
+from redis.asyncio.sentinel import Sentinel
 from redis.exceptions import ConnectionError, TimeoutError, ResponseError, WatchError
 
 from cryptography.fernet import Fernet
@@ -24,24 +25,80 @@ class RedisManager:
     audit stream helpers and pub/sub event publishing.
     """
 
-    def __init__(self) -> None:
-        s = get_settings()
-        self._pool = redis.ConnectionPool(
+    @staticmethod
+    def _to_str(val: Union[bytes, str, None]) -> str:
+        if val is None:
+            return ""
+        if isinstance(val, bytes):
+            return val.decode()
+        return str(val)
+
+    @classmethod
+    def _build_redis_client(
+        cls, s
+    ) -> Tuple[redis.Redis, Optional[redis.ConnectionPool], Optional[Sentinel]]:
+        """
+        Builds a Redis client using either:
+        - Sentinel (AUTHBRIDGE_REDIS_SENTINEL=true)
+        - A direct ConnectionPool (default)
+        """
+        # NOTE: We store encrypted binary blobs in Redis; decode_responses must be False.
+        if getattr(s, "AUTHBRIDGE_REDIS_DECODE_RESPONSES", False):
+            log.warning(
+                "AUTHBRIDGE_REDIS_DECODE_RESPONSES=true is incompatible with encrypted blobs; forcing decode_responses=false."
+            )
+
+        socket_kwargs = {
+            "socket_keepalive": True,
+            "socket_timeout": 2.0,
+            "socket_connect_timeout": 2.0,
+        }
+
+        use_sentinel = bool(getattr(s, "AUTHBRIDGE_REDIS_SENTINEL", False))
+        sentinels = list(getattr(s, "AUTHBRIDGE_REDIS_SENTINELS_PARSED", []))
+        master_name = str(getattr(s, "AUTHBRIDGE_REDIS_SENTINEL_MASTER", "mymaster"))
+        if use_sentinel:
+            if not sentinels:
+                log.warning(
+                    "AUTHBRIDGE_REDIS_SENTINEL=true but AUTHBRIDGE_REDIS_SENTINELS is empty; falling back to direct Redis."
+                )
+            else:
+                sentinel = Sentinel(
+                    sentinels,
+                    password=s.REDIS_PASSWORD,
+                    db=s.REDIS_DB,
+                    max_connections=512,
+                    decode_responses=False,
+                    **socket_kwargs,
+                )
+                client = sentinel.master_for(
+                    master_name,
+                    password=s.REDIS_PASSWORD,
+                    db=s.REDIS_DB,
+                    decode_responses=False,
+                    **socket_kwargs,
+                )
+                return client, None, sentinel
+
+        pool = redis.ConnectionPool(
             host=s.REDIS_HOST,
             port=s.REDIS_PORT,
             db=s.REDIS_DB,
             password=s.REDIS_PASSWORD,
             max_connections=512,
             decode_responses=False,
-            socket_keepalive=True,
-            socket_timeout=2.0,
-            socket_connect_timeout=2.0,
+            **socket_kwargs,
         )
-        self.redis = redis.Redis(connection_pool=self._pool)
+        return redis.Redis(connection_pool=pool), pool, None
+
+    def __init__(self) -> None:
+        s = get_settings()
+        self.redis, self._pool, self._sentinel = self._build_redis_client(s)
         self.cipher: Fernet = s.CIPHER_SUITE  # type: ignore[assignment]
-        # streams / channels
-        self.audit_stream_name = s.AUDIT_STREAM_NAME
-        self.pubsub_channel = s.PUBSUB_CHANNEL
+        # namespace & streams / channels
+        self.namespace = getattr(s, "AUTHBRIDGE_REDIS_NAMESPACE", "authbridge")
+        self.audit_stream_name = self.ns_key(s.AUDIT_STREAM_NAME)
+        self.pubsub_channel = self.ns_key(s.PUBSUB_CHANNEL)
 
     # ------------------- key helpers -------------------
     @staticmethod
@@ -51,6 +108,24 @@ class RedisManager:
     @staticmethod
     def version_key(item_id: str, prefix: str) -> str:
         return f"{prefix}:{item_id}:version"
+
+    def ns_key(self, key: str) -> str:
+        """Prefix Redis keys with AUTHBRIDGE_REDIS_NAMESPACE (idempotent)."""
+        ns = str(self.namespace or "").strip(":")
+        if not ns:
+            return key
+        prefix = f"{ns}:"
+        return key if key.startswith(prefix) else f"{prefix}{key}"
+
+    async def get_raw(self, key: str) -> Optional[bytes]:
+        """Get raw bytes value for a namespaced key."""
+        return await self.redis.get(self.ns_key(key))
+
+    async def set_raw(
+        self, key: str, value: Union[str, bytes], *, ex: Optional[int] = None
+    ) -> None:
+        """Set raw value for a namespaced key."""
+        await self.redis.set(self.ns_key(key), value, ex=ex)
 
     @staticmethod
     def system_key(item_type: str) -> str:
@@ -71,15 +146,15 @@ class RedisManager:
     # ------------------- versioning -------------------
     async def get_system_version(self, item_type: str) -> str:
         try:
-            val = await self.redis.get(self.system_key(item_type))
-            return val.decode() if val else ""
+            val = await self.redis.get(self.ns_key(self.system_key(item_type)))
+            return self._to_str(val)
         except Exception as exc:
             log.warning("Redis unavailable during get_system_version(%s): %s", item_type, exc)
             return ""
 
     async def set_system_version(self, item_type: str, version: str) -> None:
         try:
-            await self.redis.set(self.system_key(item_type), version)
+            await self.redis.set(self.ns_key(self.system_key(item_type)), version)
         except Exception as exc:
             log.warning("Redis unavailable during set_system_version(%s): %s", item_type, exc)
 
@@ -87,8 +162,14 @@ class RedisManager:
     async def search_ids(self, item_type: str) -> List[str]:
         ids: List[str] = []
         try:
-            async for key in self.redis.scan_iter(match=f"{item_type}:*:data"):
-                parts = key.decode().split(":")
+            pattern = self.ns_key(f"{item_type}:*:data")
+            ns = str(self.namespace or "").strip(":")
+            prefix = f"{ns}:" if ns else ""
+            async for key in self.redis.scan_iter(match=pattern):
+                k = self._to_str(key)
+                if prefix and k.startswith(prefix):
+                    k = k[len(prefix):]
+                parts = k.split(":")
                 if len(parts) >= 3:
                     ids.append(parts[1])
         except Exception as exc:
@@ -99,7 +180,7 @@ class RedisManager:
     async def get_item(self, item_id: str, item_type: str):
         key = self.item_key(item_id, item_type)
         try:
-            blob = await self.redis.get(key)
+            blob = await self.redis.get(self.ns_key(key))
         except Exception as exc:
             log.warning("Redis unavailable during get_item(%s:%s): %s", item_type, item_id, exc)
             return None
@@ -126,9 +207,9 @@ class RedisManager:
         ser = json.dumps(item.to_dict()).encode()
         enc = self.cipher.encrypt(ser)
 
-        key_data = self.item_key(item.id, item_type)
-        key_ver = self.version_key(item.id, item_type)
-        key_sys = self.system_key(item_type)
+        key_data = self.ns_key(self.item_key(item.id, item_type))
+        key_ver = self.ns_key(self.version_key(item.id, item_type))
+        key_sys = self.ns_key(self.system_key(item_type))
 
         try:
             async with self.redis.pipeline(transaction=True) as pipe:
@@ -151,9 +232,9 @@ class RedisManager:
         return item.version
 
     async def delete_item(self, item_id: str, item_type: str, new_system_version: str) -> None:
-        key_data = self.item_key(item_id, item_type)
-        key_ver = self.version_key(item_id, item_type)
-        key_sys = self.system_key(item_type)
+        key_data = self.ns_key(self.item_key(item_id, item_type))
+        key_ver = self.ns_key(self.version_key(item_id, item_type))
+        key_sys = self.ns_key(self.system_key(item_type))
         try:
             async with self.redis.pipeline(transaction=True) as pipe:
                 pipe.delete(key_data)
@@ -176,8 +257,8 @@ class RedisManager:
     # ------------------- RSA keys -------------------
     async def get_rsa(self) -> Optional[Tuple[str, str]]:
         try:
-            pub = await self.redis.get(self.rsa_key("public"))
-            prv = await self.redis.get(self.rsa_key("private"))
+            pub = await self.redis.get(self.ns_key(self.rsa_key("public")))
+            prv = await self.redis.get(self.ns_key(self.rsa_key("private")))
         except Exception as exc:
             log.warning("Redis unavailable during get_rsa(): %s", exc)
             return None
@@ -186,7 +267,7 @@ class RedisManager:
             return None
         try:
             prv_dec = self.cipher.decrypt(prv).decode()
-            return (pub.decode(), prv_dec)
+            return (self._to_str(pub), prv_dec)
         except Exception:
             log.exception("RSA private key decrypt failed")
             return None
@@ -195,8 +276,8 @@ class RedisManager:
         enc_priv = self.cipher.encrypt(private_pem.encode())
         try:
             async with self.redis.pipeline(transaction=True) as pipe:
-                pipe.set(self.rsa_key("public"), public_pem)
-                pipe.set(self.rsa_key("private"), enc_priv)
+                pipe.set(self.ns_key(self.rsa_key("public")), public_pem)
+                pipe.set(self.ns_key(self.rsa_key("private")), enc_priv)
                 await pipe.execute()
         except Exception as exc:
             log.warning("Redis unavailable during save_rsa(): %s", exc)

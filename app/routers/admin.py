@@ -700,17 +700,63 @@ ADMIN_HTML = """
     }
   }
 
-  // Auth/key handling
-  const savedKey = key();
-  if (savedKey) apiKeyInput.value = savedKey;
-  saveKeyBtn.addEventListener("click", ()=>{
+  // Auth/key handling (login/logout UX)
+  function setSignedIn(on){
+    if (on){
+      apiKeyInput.disabled = true;
+      apiKeyInput.classList.add("opacity-80", "cursor-not-allowed");
+      saveKeyBtn.innerHTML = '<i class="fas fa-sign-out-alt"></i> Logout';
+      // Use onclick assignment to avoid accumulating listeners across state flips.
+      saveKeyBtn.onclick = () => {
+        localStorage.removeItem(KEY_STORAGE);
+        // Also clear selection state so Links panel doesn't show stale selection.
+        localStorage.removeItem(WS_SELECTED_KEY);
+
+        apiKeyInput.value = "";
+        apiKeyInput.disabled = false;
+        apiKeyInput.classList.remove("opacity-80", "cursor-not-allowed");
+
+        saveKeyBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Sign in';
+        saveKeyBtn.onclick = doSignIn;
+
+        // Clear UI quickly (refreshData() no-ops without a key)
+        wsList.replaceChildren();
+        svcList.replaceChildren();
+        linkList.replaceChildren();
+        wsVer.textContent = "—";
+        svcVer.textContent = "—";
+        wsSel.textContent = "—";
+        svcSel.textContent = "—";
+        linkWsSel.textContent = "—";
+        selectedLinkWorkspaceId = null;
+
+        systemLog.textContent = "Signed out.";
+      };
+      return;
+    }
+
+    apiKeyInput.disabled = false;
+    apiKeyInput.classList.remove("opacity-80", "cursor-not-allowed");
+    saveKeyBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Sign in';
+    saveKeyBtn.onclick = doSignIn;
+  }
+
+  function doSignIn(){
     const k = apiKeyInput.value.trim();
     if (!k) { alert("Paste a valid admin x-api-key"); return; }
     localStorage.setItem(KEY_STORAGE, k);
+    setSignedIn(true);
     refreshData();
-  });
+  }
 
-  // Manual & auto refresh
+  const savedKey = key();
+  if (savedKey) {
+    apiKeyInput.value = savedKey;
+    setSignedIn(true);
+  } else {
+    setSignedIn(false);
+  }
+// Manual & auto refresh
   refreshBtn.addEventListener("click", refreshData);
   let timer = null;
   function startLoop(){

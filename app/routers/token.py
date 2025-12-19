@@ -131,7 +131,7 @@ async def load_rsa_keys() -> None:
             CURRENT_KID = kid
         return
 
-    keys_blob = await rm.redis.get("rsa:keys")
+    keys_blob = await rm.get_raw("rsa:keys")
     if keys_blob:
         try:
             parsed = eval(keys_blob.decode())  # stored as str(RSA_KEYS); content is ours.
@@ -142,7 +142,7 @@ async def load_rsa_keys() -> None:
                 pub, prv = generate_rsa_keypair()
                 RSA_KEYS = {kid: (pub, prv)}
                 CURRENT_KID = kid
-                await rm.redis.set("rsa:keys", str(RSA_KEYS))
+                await rm.set_raw("rsa:keys", str(RSA_KEYS))
             return
         except Exception:
             # fall through to fresh generation
@@ -153,7 +153,7 @@ async def load_rsa_keys() -> None:
     pub, prv = generate_rsa_keypair()
     RSA_KEYS = {kid: (pub, prv)}
     CURRENT_KID = kid
-    await rm.redis.set("rsa:keys", str(RSA_KEYS))
+    await rm.set_raw("rsa:keys", str(RSA_KEYS))
 
 
 async def rotate_rsa_key() -> str:
@@ -167,7 +167,7 @@ async def rotate_rsa_key() -> str:
     RSA_KEYS[kid] = (pub, prv)
     CURRENT_KID = kid
     if await rm.is_available():
-        await rm.redis.set("rsa:keys", str(RSA_KEYS))
+        await rm.set_raw("rsa:keys", str(RSA_KEYS))
     return kid
 
 

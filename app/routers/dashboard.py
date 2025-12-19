@@ -590,21 +590,66 @@ DASHBOARD_HTML = """
   }
 
   // =========================
-  // AUTH KEY PERSISTENCE
+  // AUTH KEY PERSISTENCE (login/logout UX)
   // =========================
-  const saved = localStorage.getItem(KEY_STORAGE);
-  if (saved) {
-    apiKeyInput.value = saved;
-    log("Admin key loaded from local storage.");
+  function setSignedIn(on){
+    if (on){
+      apiKeyInput.disabled = true;
+      apiKeyInput.classList.add("opacity-80", "cursor-not-allowed");
+      saveKeyBtn.innerHTML = '<i class="fas fa-sign-out-alt"></i> Logout';
+      saveKeyBtn.onclick = () => {
+        localStorage.removeItem(KEY_STORAGE);
+        apiKeyInput.value = "";
+        apiKeyInput.disabled = false;
+        apiKeyInput.classList.remove("opacity-80", "cursor-not-allowed");
+        saveKeyBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Sign in';
+        saveKeyBtn.onclick = doSignIn;
+
+        // Stop polling and clear some UI.
+        stopLoop();
+        svcCount.textContent = "–";
+        wsCount.textContent = "–";
+        linkCount.textContent = "–";
+        redisState.textContent = "–";
+        redisClients.textContent = "–";
+        redisMem.textContent = "–";
+        redisUptime.textContent = "–";
+        jwksCount.textContent = "–";
+        kid.textContent = "–";
+        lastUpdate.textContent = "–";
+        legendBox.replaceChildren();
+        typeDist.replaceChildren();
+        linkInspector.textContent = "Signed out.";
+        d3.select("#graph").selectAll("*").remove();
+        log("Signed out.");
+      };
+      return;
+    }
+
+    apiKeyInput.disabled = false;
+    apiKeyInput.classList.remove("opacity-80", "cursor-not-allowed");
+    saveKeyBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Sign in';
+    saveKeyBtn.onclick = doSignIn;
   }
 
-  saveKeyBtn.addEventListener("click", ()=>{
+  function doSignIn(){
     const k = apiKeyInput.value.trim();
     if (!k) { alert("Please paste an AUTHBRIDGE admin key."); return; }
     localStorage.setItem(KEY_STORAGE, k);
+    setSignedIn(true);
     log("Admin key saved. Fetching data…");
     fetchAndRender(true);
-  });
+  }
+
+  const saved = localStorage.getItem(KEY_STORAGE);
+  if (saved) {
+    apiKeyInput.value = saved;
+    setSignedIn(true);
+    log("Admin key loaded from local storage.");
+  } else {
+    setSignedIn(false);
+  }
+
 
   // Manual refresh
   refreshBtn.addEventListener("click", () => {
